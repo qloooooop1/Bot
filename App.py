@@ -4,6 +4,8 @@ import sqlite3
 import time
 import json
 import random
+import requests
+import os
 from datetime import datetime, timedelta
 from flask import Flask, request, abort
 from telebot import types
@@ -11,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from hijri_converter import Hijri, Gregorian
 
 # توكن البوت الخاص بك (الحارس الأمني @AlRASD1_BOT)
+# في الإنتاج: استخدم متغيرات البيئة: BOT_TOKEN = os.getenv('BOT_TOKEN')
 BOT_TOKEN = '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk'
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -19,8 +22,13 @@ scheduler = BackgroundScheduler()
 # معرف القروب الوحيد الذي يعمل فيه البوت
 ALLOWED_CHAT_ID = -1001224326322
 
+# الثوابت
+QUIZ_CORRECT_POINTS = 10
+DATABASE_FILE = os.getenv('DATABASE_FILE', 'bot_database.db')
+WEBHOOK_DOMAIN = os.getenv('WEBHOOK_DOMAIN', 'YOUR-VERCEL-APP.vercel.app')
+
 # قاعدة بيانات لتتبع المخالفات والميزات الجديدة
-conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+conn = sqlite3.connect(DATABASE_FILE, check_same_thread=False)
 cursor = conn.cursor()
 
 # إنشاء جداول قاعدة البيانات
@@ -135,8 +143,9 @@ ISLAMIC_EVENTS = {
     'عيد_الأضحى': {'hijri_month': 12, 'hijri_day': 10, 'message': '🎉 عيد أضحى مبارك'},
 }
 
-# قائمة الكلمات المسيئة الافتراضية (يمكن للمشرف إضافة المزيد)
-DEFAULT_OFFENSIVE_WORDS = ['كلمة1', 'كلمة2']  # يمكن إضافة كلمات حقيقية حسب الحاجة
+# قائمة الكلمات المسيئة الافتراضية (يجب تحديثها من قبل المشرفين)
+# ملاحظة: هذه أمثلة فقط - يجب على المشرفين إضافة الكلمات الفعلية عبر الأمر /اضافة_كلمة_محظورة
+DEFAULT_OFFENSIVE_WORDS = []  # فارغة بشكل افتراضي - يضيف المشرفون الكلمات حسب الحاجة
 
 # إضافة الكلمات المسيئة الافتراضية إلى قاعدة البيانات
 for word in DEFAULT_OFFENSIVE_WORDS:
@@ -169,20 +178,20 @@ def check_offensive_words(text):
 
 def update_user_points(user_id, username, points_to_add):
     """تحديث نقاط المستخدم"""
+    current_time = datetime.now().isoformat()
     cursor.execute('''INSERT INTO user_points (user_id, username, points, last_activity)
                       VALUES (?, ?, ?, ?)
                       ON CONFLICT(user_id) DO UPDATE SET
                       points = points + ?,
                       username = ?,
                       last_activity = ?''',
-                   (user_id, username, points_to_add, datetime.now().isoformat(),
-                    points_to_add, username, datetime.now().isoformat()))
+                   (user_id, username, points_to_add, current_time,
+                    points_to_add, username, current_time))
     conn.commit()
 
 def get_prayer_times_aladhan(latitude, longitude):
     """الحصول على مواقيت الصلاة من API"""
     try:
-        import requests
         url = f"http://api.aladhan.com/v1/timings/{int(time.time())}?latitude={latitude}&longitude={longitude}&method=4"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
@@ -557,18 +566,19 @@ def callback_handler(call):
                 
                 if answer_index == question_data['correct']:
                     # إجابة صحيحة
+                    current_time = datetime.now().isoformat()
                     cursor.execute('''INSERT INTO user_points (user_id, username, points, correct_answers, last_activity)
-                                      VALUES (?, ?, 10, 1, ?)
+                                      VALUES (?, ?, ?, 1, ?)
                                       ON CONFLICT(user_id) DO UPDATE SET
-                                      points = points + 10,
+                                      points = points + ?,
                                       correct_answers = correct_answers + 1,
                                       username = ?,
                                       last_activity = ?''',
-                                   (user_id, username, datetime.now().isoformat(),
-                                    username, datetime.now().isoformat()))
+                                   (user_id, username, QUIZ_CORRECT_POINTS, current_time,
+                                    QUIZ_CORRECT_POINTS, username, current_time))
                     conn.commit()
                     
-                    response = f"✅ *إجابة صحيحة!*\n\n{question_data['explanation']}\n\n🏆 لقد كسبت 10 نقاط!"
+                    response = f"✅ *إجابة صحيحة!*\n\n{question_data['explanation']}\n\n🏆 لقد كسبت {QUIZ_CORRECT_POINTS} نقاط!"
                     bot.answer_callback_query(call.id, "✅ إجابة صحيحة!", show_alert=True)
                 else:
                     # إجابة خاطئة
@@ -724,8 +734,8 @@ def send_morning_azkar():
         result = cursor.fetchone()
         if result and result[0] == '1':
             send_azkar(ALLOWED_CHAT_ID, 'الصباح')
-    except:
-        pass
+    except Exception as e:
+        print(f"Error in send_morning_azkar: {e}")
 
 def send_evening_azkar():
     """إرسال دعاء المساء تلقائياً"""
@@ -734,8 +744,8 @@ def send_evening_azkar():
         result = cursor.fetchone()
         if result and result[0] == '1':
             send_azkar(ALLOWED_CHAT_ID, 'المساء')
-    except:
-        pass
+    except Exception as e:
+        print(f"Error in send_evening_azkar: {e}")
 
 def send_daily_tip_scheduled():
     """إرسال نصيحة يومية"""
@@ -745,17 +755,17 @@ def send_daily_tip_scheduled():
         if result and result[0] == '1':
             tip = random.choice(DAILY_TIPS)
             bot.send_message(ALLOWED_CHAT_ID, tip)
-    except:
-        pass
+    except Exception as e:
+        print(f"Error in send_daily_tip_scheduled: {e}")
 
 def check_islamic_events_scheduled():
     """فحص الأحداث الإسلامية وإرسال تنبيه"""
-    event_message = check_islamic_events()
-    if event_message:
-        try:
+    try:
+        event_message = check_islamic_events()
+        if event_message:
             bot.send_message(ALLOWED_CHAT_ID, event_message)
-        except:
-            pass
+    except Exception as e:
+        print(f"Error in check_islamic_events_scheduled: {e}")
 
 # إعداد الجدولة
 def setup_scheduler():
@@ -792,7 +802,7 @@ def webhook():
 def index():
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url='https://YOUR-VERCEL-APP.vercel.app/' + BOT_TOKEN)
+    bot.set_webhook(url=f'https://{WEBHOOK_DOMAIN}/{BOT_TOKEN}')
     return "البوت جاهز والـ webhook مُعيَّن! بوت الأذكار الإسلامية يعمل فقط في القروب المحدد.", 200
 
 if __name__ == '__main__':

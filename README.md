@@ -102,16 +102,28 @@ pip install -r requirements.txt
 ### إعداد البوت
 
 1. **تعديل التوكن**:
-   - ضع توكن البوت الخاص بك في المتغير `BOT_TOKEN`
+   - **الطريقة الأفضل (الإنتاج)**: استخدم متغيرات البيئة
+     ```bash
+     export BOT_TOKEN="your-bot-token-here"
+     export WEBHOOK_DOMAIN="your-vercel-app.vercel.app"
+     ```
+   - **للتطوير**: ضع التوكن مباشرة في `BOT_TOKEN` (لا تنشره على GitHub!)
 
 2. **تعديل معرف المجموعة**:
    - ضع معرف المجموعة في المتغير `ALLOWED_CHAT_ID`
 
-3. **إعداد Webhook**:
-   - عدّل URL في الدالة `index()` ليطابق رابط Vercel الخاص بك
+3. **إعداد Webhook** (اختياري للتطوير):
+   - الدالة `index()` تستخدم متغير البيئة `WEBHOOK_DOMAIN`
+   - في حالة عدم توفره، يستخدم القيمة الافتراضية
 
 4. **النشر على Vercel**:
    ```bash
+   # إعداد متغيرات البيئة في Vercel
+   vercel env add BOT_TOKEN
+   vercel env add WEBHOOK_DOMAIN
+   vercel env add ALLOWED_CHAT_ID
+   
+   # النشر
    vercel --prod
    ```
 
