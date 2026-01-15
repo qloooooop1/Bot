@@ -85,14 +85,24 @@ def get_settings(chat_id):
 
 # دالة تحديث إعداد معين
 def update_setting(chat_id, setting_name, value):
-    # Whitelist of allowed column names to prevent SQL injection
-    allowed_settings = ['azkar_enabled', 'delete_service_messages', 'interval_hours', 'phone_detection_enabled']
-    if setting_name not in allowed_settings:
+    # Mapping dictionary for safer SQL query construction
+    setting_columns = {
+        'azkar_enabled': 'azkar_enabled',
+        'delete_service_messages': 'delete_service_messages',
+        'interval_hours': 'interval_hours',
+        'phone_detection_enabled': 'phone_detection_enabled'
+    }
+    
+    # Validate setting name exists in mapping
+    if setting_name not in setting_columns:
         raise ValueError(f"Invalid setting name: {setting_name}")
     
-    # Use parameterized query with validated column name
+    # Get the validated column name from mapping
+    column = setting_columns[setting_name]
+    
+    # Use parameterized query with validated column name from mapping
     with db_lock:
-        query = f'UPDATE settings SET {setting_name} = ? WHERE chat_id = ?'
+        query = f'UPDATE settings SET {column} = ? WHERE chat_id = ?'
         cursor.execute(query, (value, chat_id))
         conn.commit()
 
