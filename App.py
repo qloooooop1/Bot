@@ -100,6 +100,17 @@ def get_chat_settings(chat_id):
 
 def update_chat_setting(chat_id, setting, value):
     """تحديث إعداد معين للمجموعة"""
+    # قائمة الإعدادات المسموح بها لمنع SQL injection
+    allowed_settings = {
+        'is_enabled', 'morning_azkar', 'evening_azkar', 
+        'friday_sura', 'friday_dua', 'sleep_message', 
+        'random_content', 'delete_service_messages', 
+        'content_interval', 'morning_time', 'evening_time', 'sleep_time'
+    }
+    
+    if setting not in allowed_settings:
+        raise ValueError(f"Invalid setting: {setting}")
+    
     conn = sqlite3.connect('bot_settings.db')
     c = conn.cursor()
     c.execute(f'UPDATE chat_settings SET {setting} = ? WHERE chat_id = ?', (value, chat_id))
