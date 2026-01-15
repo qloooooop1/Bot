@@ -1615,7 +1615,7 @@ def callback_toggle(call: types.CallbackQuery):
     ]
 
     for k, label in btns:
-        status = "✓" if get_chat_settings(call.message.chat.id)[k] else "✗"
+        status = "✅" if get_chat_settings(call.message.chat.id)[k] else "❌"
         markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{k}"))
 
     text = call.message.text.split("\n\n")[0] + "\n\n" + call.message.text.split("\n\n")[1]
@@ -2351,7 +2351,7 @@ def callback_group_ramadan_settings(call: types.CallbackQuery):
         ]
         
         for key, label in ramadan_btns:
-            status = "✓" if ramadan_settings[key] else "✗"
+            status = "✅" if ramadan_settings[key] else "❌"
             markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_ramadan_{key}"))
         
         bot.edit_message_text(
@@ -2431,7 +2431,7 @@ def callback_group_hajj_eid_settings(call: types.CallbackQuery):
         ]
         
         for key, label in hajj_eid_btns:
-            status = "✓" if hajj_eid_settings[key] else "✗"
+            status = "✅" if hajj_eid_settings[key] else "❌"
             markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_hajj_eid_{key}"))
         
         bot.edit_message_text(
