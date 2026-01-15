@@ -53,6 +53,16 @@ if not BOT_TOKEN:
 # DATABASE_URL for PostgreSQL connection
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
+    # Fix common DATABASE_URL format issues
+    # Render and some providers use "postgres://" which is deprecated
+    # psycopg2 requires "postgresql://"
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        logger.info(f"✓ DATABASE_URL format corrected (postgres:// -> postgresql://)")
+    elif DATABASE_URL.startswith("psql://"):
+        # Handle incorrect "psql://" format
+        DATABASE_URL = DATABASE_URL.replace("psql://", "postgresql://", 1)
+        logger.info(f"✓ DATABASE_URL format corrected (psql:// -> postgresql://)")
     logger.info(f"✓ DATABASE_URL configured for PostgreSQL")
 else:
     logger.info("ℹ️ DATABASE_URL not set, PostgreSQL features disabled")
@@ -946,7 +956,7 @@ def cmd_start(message: types.Message):
                 # User is admin - activate bot and send settings to private chat
                 bot.send_message(
                     message.chat.id,
-                    f"تم تفعيل البوت! اذهب إلى الخاص (@{bot_username}) لتعديل الإعدادات",
+                    f"تم تفعيل البوت! اذهب إلى الخاص (\\@{bot_username}) لتعديل الإعدادات",
                     parse_mode="Markdown"
                 )
                 
@@ -967,7 +977,7 @@ def cmd_start(message: types.Message):
                     logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
                     bot.send_message(
                         message.chat.id,
-                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات.",
+                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (\\@{bot_username}) لاستلام لوحة الإعدادات.",
                         parse_mode="Markdown"
                     )
             else:
