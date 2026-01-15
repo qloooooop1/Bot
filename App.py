@@ -331,6 +331,7 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
 
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
+    # Whitelist validation to prevent SQL injection
     allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp"}
     if key not in allowed_keys:
         logger.error(f"Invalid diverse azkar setting key: {key}")
@@ -350,6 +351,7 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
     else:
         final_value = int(value)
     
+    # Safe to use f-string here as key is validated against whitelist above
     c.execute(f"UPDATE diverse_azkar_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
     conn.commit()
     conn.close()
@@ -384,6 +386,7 @@ def get_ramadan_settings(chat_id: int) -> dict:
 
 def update_ramadan_setting(chat_id: int, key: str, value):
     """Update a specific Ramadan setting."""
+    # Whitelist validation to prevent SQL injection
     allowed_keys = {
         "ramadan_enabled", "laylat_alqadr_enabled",
         "last_ten_days_enabled", "iftar_dua_enabled", "media_type"
@@ -406,6 +409,7 @@ def update_ramadan_setting(chat_id: int, key: str, value):
     else:
         final_value = int(value)
     
+    # Safe to use f-string here as key is validated against whitelist above
     c.execute(f"UPDATE ramadan_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
     conn.commit()
     conn.close()
@@ -441,6 +445,7 @@ def get_hajj_eid_settings(chat_id: int) -> dict:
 
 def update_hajj_eid_setting(chat_id: int, key: str, value):
     """Update a specific Hajj/Eid setting."""
+    # Whitelist validation to prevent SQL injection
     allowed_keys = {
         "arafah_day_enabled", "eid_eve_enabled", "eid_day_enabled",
         "eid_adha_enabled", "hajj_enabled", "media_type"
@@ -463,6 +468,7 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
     else:
         final_value = int(value)
     
+    # Safe to use f-string here as key is validated against whitelist above
     c.execute(f"UPDATE hajj_eid_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
     conn.commit()
     conn.close()
