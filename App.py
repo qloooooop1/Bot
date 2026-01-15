@@ -1392,6 +1392,19 @@ def cmd_settings_markup():
     )
     return markup
 
+def add_support_buttons(markup: types.InlineKeyboardMarkup):
+    """
+    Add developer and official group support buttons to a markup.
+    
+    Args:
+        markup: The InlineKeyboardMarkup to add buttons to
+    """
+    markup.add(
+        types.InlineKeyboardButton("👨‍💻 الدعم الفني", url="https://t.me/dev3bod"),
+        types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar")
+    )
+    return markup
+
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
@@ -1767,6 +1780,7 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1822,6 +1836,7 @@ def callback_friday_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1880,6 +1895,7 @@ def callback_media_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("🎲 نوع الوسائط: عشوائي", callback_data="media_type_all"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1967,6 +1983,7 @@ def callback_schedule_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2031,6 +2048,7 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("24 ساعة", callback_data="diverse_interval_1440")
         )
         markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2117,6 +2135,7 @@ def callback_ramadan_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2174,6 +2193,7 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
