@@ -597,7 +597,7 @@ def cmd_start(message: types.Message):
             # Get bot username safely
             try:
                 bot_username = bot.get_me().username
-            except Exception as e:
+            except (telebot.apihelper.ApiException, Exception) as e:
                 logger.error(f"Failed to get bot username: {e}")
                 bot_username = "NourAdhkarBot"  # Fallback
             
@@ -653,7 +653,8 @@ def cmd_start(message: types.Message):
         logger.error(f"Error in cmd_start: {e}", exc_info=True)
         try:
             bot.reply_to(message, "حدث خطأ، يرجى المحاولة مرة أخرى")
-        except:
+        except Exception:
+            # Final fallback - nothing we can do if even error message fails
             pass
 
 @bot.message_handler(commands=["settings"])
