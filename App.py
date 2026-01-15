@@ -153,14 +153,15 @@ def escape_markdown(text: str) -> str:
     - Underscores (_) used for italic
     - Backticks (`) used for code
     - Square brackets ([]) used for links
+    
+    Note: This function is provided for potential future use. Currently, the bot
+    handles Markdown errors by falling back to plain text rather than escaping.
     """
     # Characters that need escaping in Telegram Markdown
-    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    
-    for char in escape_chars:
-        text = text.replace(char, '\\' + char)
-    
-    return text
+    # Using str.translate() for efficient single-pass replacement
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    translation_table = str.maketrans({char: f'\\{char}' for char in escape_chars})
+    return text.translate(translation_table)
 
 def is_user_admin_in_any_group(user_id: int) -> bool:
     """
@@ -918,11 +919,11 @@ def cmd_start(message: types.Message):
         # Scenario 1 & 2: Private Chat
         # ──────────────────────────────────────────────────────────────
         if message.chat.type == "private":
-            # Welcome message
+            # Welcome message (without escaping - will be handled by fallback if needed)
             welcome_text = (
                 "*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
                 "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
-                "أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات\\."
+                "أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
             )
             
             # Action buttons
@@ -1045,7 +1046,7 @@ def cmd_start(message: types.Message):
                         try:
                             bot.send_message(
                                 message.chat.id,
-                                f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات\\."
+                                f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات."
                             )
                         except Exception as inner_e:
                             logger.error(f"Failed to send private chat reminder to group {message.chat.id}: {inner_e}")
@@ -1136,11 +1137,11 @@ def callback_open_settings(call: types.CallbackQuery):
         # Build settings display message
         settings_text = (
             "⚙️ *إعدادات البوت*\n\n"
-            "يمكنك تعديل إعدادات البوت في أي مجموعة تكون مشرفًا فيها\\.\n\n"
+            "يمكنك تعديل إعدادات البوت في أي مجموعة تكون مشرفًا فيها.\n\n"
             "*الميزات المتاحة:*\n"
             "🌅 أذكار الصباح\n"
             "🌙 أذكار المساء\n"
-            "📿 سورة الكهف \\(الجمعة\\)\n"
+            "📿 سورة الكهف (الجمعة)\n"
             "🕌 أدعية الجمعة\n"
             "😴 رسالة النوم\n"
             "🗑️ حذف رسائل الخدمة\n\n"
