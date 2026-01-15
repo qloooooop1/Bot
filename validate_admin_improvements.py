@@ -6,6 +6,10 @@ Checks that all requirements have been properly addressed.
 
 import re
 
+# Configuration constants for validation thresholds
+MIN_ERROR_HANDLING_BLOCKS = 10  # Minimum number of try-except blocks expected
+MIN_LOG_STATEMENTS = 50          # Minimum number of log statements expected
+
 print("=" * 70)
 print("VALIDATION: Admin Management Improvements")
 print("=" * 70)
@@ -128,15 +132,15 @@ print("  ✓ UNIQUE constraint on admin records")
 # Check error handling
 error_pattern = r'try:.*?except Exception as e:.*?logger\.error'
 error_matches = re.findall(error_pattern, app_content, re.DOTALL)
-assert len(error_matches) > 10, \
-    "❌ Insufficient error handling"
+assert len(error_matches) >= MIN_ERROR_HANDLING_BLOCKS, \
+    f"❌ Insufficient error handling (found {len(error_matches)}, expected at least {MIN_ERROR_HANDLING_BLOCKS})"
 print(f"  ✓ Comprehensive error handling ({len(error_matches)} try-except blocks)")
 
 # Check logging
 log_pattern = r'logger\.(info|debug|warning|error)'
 log_matches = re.findall(log_pattern, app_content)
-assert len(log_matches) > 50, \
-    "❌ Insufficient logging"
+assert len(log_matches) >= MIN_LOG_STATEMENTS, \
+    f"❌ Insufficient logging (found {len(log_matches)}, expected at least {MIN_LOG_STATEMENTS})"
 print(f"  ✓ Comprehensive logging ({len(log_matches)} log statements)")
 
 print()

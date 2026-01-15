@@ -425,9 +425,14 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
     - First checks the admins database for efficiency
     - Falls back to Telegram API check if database is empty or user not found
     - Connects to PostgreSQL database if DATABASE_URL is available, falls back to SQLite
+    
+    Note: Database connections are opened and closed for each call. This is by design
+    to avoid connection state issues in the multi-threaded Flask + Gunicorn environment.
+    For high-volume scenarios, consider implementing connection pooling.
     """
     try:
         # First, check the admins database for efficiency
+        # Note: Connection is opened/closed per call to avoid threading issues
         conn, c, is_postgres = get_db_connection()
         
         try:
@@ -1087,8 +1092,16 @@ def sync_group_admins(chat_id: int) -> int:
             if admin.user.is_bot:
                 continue
             
-            # For the first admin in the first sync, mark as primary
-            is_primary = is_first_sync and synced_count == 0
+            # Mark as primary if this is the group creator
+            # or if this is the first admin in the first sync and no creator was found
+            is_primary = False
+            if is_first_sync:
+                if admin.status == "creator":
+                    # Group creator is always the primary admin
+                    is_primary = True
+                elif synced_count == 0:
+                    # Fallback: if no creator found yet, mark first admin as primary
+                    is_primary = True
             
             # Save admin info
             save_admin_info(
