@@ -892,6 +892,146 @@ def send_diverse_azkar(chat_id: int):
         logger.error(f"Error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
+#               Ramadan, Hajj, Eid Azkar Functions
+# ────────────────────────────────────────────────
+
+def load_ramadan_azkar():
+    """Load Ramadan azkar from JSON file."""
+    return load_azkar_from_json('ramadan.json') or []
+
+def load_laylat_alqadr_azkar():
+    """Load Laylat al-Qadr azkar from JSON file."""
+    return load_azkar_from_json('laylat_alqadr.json') or []
+
+def load_last_ten_days_azkar():
+    """Load Last Ten Days azkar from JSON file."""
+    return load_azkar_from_json('last_ten_days.json') or []
+
+def load_arafah_azkar():
+    """Load Arafah day azkar from JSON file."""
+    return load_azkar_from_json('arafah.json') or []
+
+def load_hajj_azkar():
+    """Load Hajj azkar from JSON file."""
+    return load_azkar_from_json('hajj.json') or []
+
+def load_eid_azkar():
+    """Load Eid azkar from JSON file."""
+    return load_azkar_from_json('eid.json') or []
+
+def send_special_azkar(chat_id: int, azkar_type: str):
+    """
+    Send special azkar (Ramadan, Hajj, Eid) to a chat.
+    
+    Args:
+        chat_id (int): Chat ID to send to
+        azkar_type (str): Type of special azkar to send
+    """
+    try:
+        messages = []
+        settings = get_chat_settings(chat_id)
+        
+        if not settings["is_enabled"]:
+            return
+        
+        # Load appropriate azkar based on type
+        if azkar_type == "ramadan":
+            ramadan_settings = get_ramadan_settings(chat_id)
+            if ramadan_settings["ramadan_enabled"]:
+                messages = load_ramadan_azkar()
+                media_type = ramadan_settings.get("media_type", "images")
+        
+        elif azkar_type == "laylat_alqadr":
+            ramadan_settings = get_ramadan_settings(chat_id)
+            if ramadan_settings["laylat_alqadr_enabled"]:
+                messages = load_laylat_alqadr_azkar()
+                media_type = ramadan_settings.get("media_type", "images")
+        
+        elif azkar_type == "last_ten_days":
+            ramadan_settings = get_ramadan_settings(chat_id)
+            if ramadan_settings["last_ten_days_enabled"]:
+                messages = load_last_ten_days_azkar()
+                media_type = ramadan_settings.get("media_type", "images")
+        
+        elif azkar_type == "arafah":
+            hajj_eid_settings = get_hajj_eid_settings(chat_id)
+            if hajj_eid_settings["arafah_day_enabled"]:
+                messages = load_arafah_azkar()
+                media_type = hajj_eid_settings.get("media_type", "images")
+        
+        elif azkar_type == "hajj":
+            hajj_eid_settings = get_hajj_eid_settings(chat_id)
+            if hajj_eid_settings["hajj_enabled"]:
+                messages = load_hajj_azkar()
+                media_type = hajj_eid_settings.get("media_type", "images")
+        
+        elif azkar_type == "eid":
+            hajj_eid_settings = get_hajj_eid_settings(chat_id)
+            if hajj_eid_settings["eid_day_enabled"]:
+                messages = load_eid_azkar()
+                media_type = hajj_eid_settings.get("media_type", "images")
+        
+        elif azkar_type == "eid_adha":
+            hajj_eid_settings = get_hajj_eid_settings(chat_id)
+            if hajj_eid_settings["eid_adha_enabled"]:
+                messages = load_eid_azkar()  # Can use same eid azkar or create separate
+                media_type = hajj_eid_settings.get("media_type", "images")
+        
+        else:
+            logger.warning(f"Unknown special azkar type: {azkar_type}")
+            return
+        
+        if not messages:
+            logger.warning(f"No messages loaded for {azkar_type}")
+            return
+        
+        # Send messages
+        for idx, msg in enumerate(messages):
+            try:
+                # Send first message with media if enabled
+                if idx == 0 and settings.get("media_enabled", False):
+                    # Try to get category-specific media
+                    category_map = {
+                        "ramadan": "رمضان",
+                        "laylat_alqadr": "ليلة القدر",
+                        "arafah": "عرفة",
+                        "hajj": "حج",
+                        "eid": "عيد",
+                        "eid_adha": "عيد"
+                    }
+                    category = category_map.get(azkar_type, "إسلامي")
+                    
+                    # Try category-specific media first, fallback to general media
+                    media_item = get_random_media_by_category(category, media_type)
+                    if media_item:
+                        file_id = media_item.get("file_id")
+                        media_kind = media_item.get("media_type", "photo")
+                        
+                        if media_kind == "photo":
+                            bot.send_photo(chat_id, file_id, caption=msg, parse_mode="Markdown")
+                        elif media_kind == "audio":
+                            bot.send_audio(chat_id, file_id, caption=msg, parse_mode="Markdown")
+                        else:
+                            bot.send_message(chat_id, msg, parse_mode="Markdown")
+                    else:
+                        # Fallback to generic media with caption
+                        send_media_with_caption(chat_id, msg, media_type)
+                else:
+                    bot.send_message(chat_id, msg, parse_mode="Markdown")
+                    
+                logger.info(f"Sent {azkar_type} message to {chat_id}")
+                
+            except telebot.apihelper.ApiTelegramException as e:
+                if "blocked" in str(e).lower() or "kicked" in str(e).lower():
+                    logger.warning(f"Bot blocked/kicked from {chat_id}")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                else:
+                    logger.error(f"Failed sending {azkar_type} to {chat_id}: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error sending {azkar_type} azkar to chat {chat_id}: {e}", exc_info=True)
+
+# ────────────────────────────────────────────────
 #               Content - أذكار الصباح
 # ────────────────────────────────────────────────
 
@@ -1379,6 +1519,7 @@ def cmd_settings(message: types.Message):
         return
 
     settings = get_chat_settings(message.chat.id)
+    diverse_settings = get_diverse_azkar_settings(message.chat.id)
 
     markup = types.InlineKeyboardMarkup(row_width=2)
 
@@ -1394,6 +1535,28 @@ def cmd_settings(message: types.Message):
     for key, label in btns:
         status = "✓" if settings[key] else "✗"
         markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+    
+    # Add diverse azkar button with interval info
+    diverse_status = "✓" if diverse_settings["enabled"] else "✗"
+    diverse_label = f"✨ الأدعية المتنوعة {diverse_status}"
+    markup.add(types.InlineKeyboardButton(diverse_label, callback_data="group_diverse_settings"))
+    
+    # Add special settings buttons
+    markup.add(
+        types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
+        types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
+    )
+
+    interval_text = ""
+    if diverse_settings["enabled"]:
+        interval_minutes = diverse_settings["interval_minutes"]
+        if interval_minutes < 60:
+            interval_text = f"\n✨ الأدعية المتنوعة: كل {interval_minutes} دقيقة"
+        elif interval_minutes < 1440:
+            hours = interval_minutes // 60
+            interval_text = f"\n✨ الأدعية المتنوعة: كل {hours} ساعة"
+        else:
+            interval_text = f"\n✨ الأدعية المتنوعة: يومياً"
 
     text = (
         "⚙️ *لوحة التحكم*\n\n"
@@ -1403,7 +1566,8 @@ def cmd_settings(message: types.Message):
         f"🌙 المساء: {settings['evening_time']}\n"
         f"😴 النوم: {settings['sleep_time']}\n"
         f"📿 سورة الكهف: الجمعة 09:00\n"
-        f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
+        f"🕌 دعاء الجمعة: الجمعة 10:00"
+        f"{interval_text}\n\n"
         "اضغط لتغيير الإعدادات"
     )
 
@@ -1414,6 +1578,7 @@ def cmd_settings(message: types.Message):
         reply_markup=markup
     )
     logger.info(f"/settings opened by {message.from_user.id} in {message.chat.id}")
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
 def callback_toggle(call: types.CallbackQuery):
@@ -1933,6 +2098,276 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
             pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "group_diverse_settings")
+def callback_group_diverse_settings(call: types.CallbackQuery):
+    """
+    Handle diverse azkar settings for a specific group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات الأدعية المتنوعة")
+        
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        
+        settings_text = (
+            "✨ *إعدادات الأدعية المتنوعة*\n\n"
+            f"الحالة: {'🟢 مفعّل' if diverse_settings['enabled'] else '🔴 معطّل'}\n"
+            f"الفاصل الزمني: {diverse_settings['interval_minutes']} دقيقة\n\n"
+            "*اختر الفاصل الزمني:*"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("1 دقيقة", callback_data="set_diverse_1"),
+            types.InlineKeyboardButton("5 دقائق", callback_data="set_diverse_5"),
+            types.InlineKeyboardButton("15 دقيقة", callback_data="set_diverse_15"),
+            types.InlineKeyboardButton("1 ساعة", callback_data="set_diverse_60"),
+            types.InlineKeyboardButton("2 ساعة", callback_data="set_diverse_120"),
+            types.InlineKeyboardButton("4 ساعات", callback_data="set_diverse_240"),
+            types.InlineKeyboardButton("8 ساعات", callback_data="set_diverse_480"),
+            types.InlineKeyboardButton("12 ساعة", callback_data="set_diverse_720"),
+            types.InlineKeyboardButton("24 ساعة", callback_data="set_diverse_1440")
+        )
+        
+        toggle_text = "⏸ تعطيل" if diverse_settings['enabled'] else "▶️ تفعيل"
+        markup.add(types.InlineKeyboardButton(toggle_text, callback_data="toggle_diverse_enabled"))
+        
+        bot.edit_message_text(
+            settings_text,
+            chat_id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Group diverse settings displayed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_group_diverse_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_diverse_"))
+def callback_set_diverse_interval(call: types.CallbackQuery):
+    """
+    Set diverse azkar interval for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        interval_minutes = int(call.data.replace("set_diverse_", ""))
+        
+        update_diverse_azkar_setting(chat_id, "interval_minutes", interval_minutes)
+        update_diverse_azkar_setting(chat_id, "enabled", 1)  # Auto-enable when selecting interval
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✓ تم تعيين الفاصل الزمني: {interval_minutes} دقيقة")
+        
+        # Refresh the settings view
+        callback_group_diverse_settings(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_diverse_interval: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "toggle_diverse_enabled")
+def callback_toggle_diverse_enabled(call: types.CallbackQuery):
+    """
+    Toggle diverse azkar enabled status for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        new_value = not diverse_settings["enabled"]
+        
+        update_diverse_azkar_setting(chat_id, "enabled", new_value)
+        schedule_chat_jobs(chat_id)
+        
+        status_text = "تم التفعيل" if new_value else "تم التعطيل"
+        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        
+        # Refresh the settings view
+        callback_group_diverse_settings(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_diverse_enabled: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "group_ramadan_settings")
+def callback_group_ramadan_settings(call: types.CallbackQuery):
+    """
+    Handle Ramadan settings for a specific group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات رمضان")
+        
+        ramadan_settings = get_ramadan_settings(chat_id)
+        
+        settings_text = (
+            "🌙 *إعدادات رمضان*\n\n"
+            "قم بتفعيل أو تعطيل الأقسام المختلفة:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        ramadan_btns = [
+            ("ramadan_enabled", "🌙 أذكار رمضان"),
+            ("laylat_alqadr_enabled", "✨ ليلة القدر"),
+            ("last_ten_days_enabled", "📿 العشر الأواخر"),
+            ("iftar_dua_enabled", "🍽️ دعاء الإفطار")
+        ]
+        
+        for key, label in ramadan_btns:
+            status = "✓" if ramadan_settings[key] else "✗"
+            markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_ramadan_{key}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            chat_id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Group Ramadan settings displayed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_group_ramadan_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_ramadan_"))
+def callback_toggle_ramadan(call: types.CallbackQuery):
+    """
+    Toggle Ramadan setting for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        key = call.data.replace("toggle_ramadan_", "")
+        ramadan_settings = get_ramadan_settings(chat_id)
+        new_value = not ramadan_settings[key]
+        
+        update_ramadan_setting(chat_id, key, new_value)
+        
+        status_text = "تم التفعيل" if new_value else "تم التعطيل"
+        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        
+        # Refresh the settings view
+        callback_group_ramadan_settings(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_ramadan: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "group_hajj_eid_settings")
+def callback_group_hajj_eid_settings(call: types.CallbackQuery):
+    """
+    Handle Hajj and Eid settings for a specific group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات الحج والعيد")
+        
+        hajj_eid_settings = get_hajj_eid_settings(chat_id)
+        
+        settings_text = (
+            "🕋 *إعدادات الحج والعيد*\n\n"
+            "قم بتفعيل أو تعطيل الأقسام المختلفة:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        hajj_eid_btns = [
+            ("arafah_day_enabled", "🕋 يوم عرفة"),
+            ("hajj_enabled", "🕋 أذكار الحج"),
+            ("eid_eve_enabled", "🌙 ليلة العيد"),
+            ("eid_day_enabled", "🎉 يوم العيد"),
+            ("eid_adha_enabled", "🐑 عيد الأضحى")
+        ]
+        
+        for key, label in hajj_eid_btns:
+            status = "✓" if hajj_eid_settings[key] else "✗"
+            markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_hajj_eid_{key}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            chat_id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Group Hajj/Eid settings displayed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_group_hajj_eid_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_hajj_eid_"))
+def callback_toggle_hajj_eid(call: types.CallbackQuery):
+    """
+    Toggle Hajj/Eid setting for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        key = call.data.replace("toggle_hajj_eid_", "")
+        hajj_eid_settings = get_hajj_eid_settings(chat_id)
+        new_value = not hajj_eid_settings[key]
+        
+        update_hajj_eid_setting(chat_id, key, new_value)
+        
+        status_text = "تم التفعيل" if new_value else "تم التعطيل"
+        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        
+        # Refresh the settings view
+        callback_group_hajj_eid_settings(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_hajj_eid: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
