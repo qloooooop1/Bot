@@ -1,5 +1,5 @@
-pyTelegramBotAPI
-flask
-APScheduler
-pytz
-Pillow
+pyTelegramBotAPI>=4.15.0
+flask>=3.0.0
+APScheduler>=3.10.0
+pytz>=2024.1
+Pillow>=10.0.0

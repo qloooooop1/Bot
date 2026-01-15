@@ -270,8 +270,9 @@ def schedule_azkar_jobs():
         if settings['morning_azkar']:
             hour, minute = settings['morning_time'].split(':')
             scheduler.add_job(
-                lambda: send_azkar(chat_id, 'morning'),
+                send_azkar,
                 CronTrigger(hour=int(hour), minute=int(minute)),
+                args=[chat_id, 'morning'],
                 id=f'morning_{chat_id}'
             )
         
@@ -279,8 +280,9 @@ def schedule_azkar_jobs():
         if settings['evening_azkar']:
             hour, minute = settings['evening_time'].split(':')
             scheduler.add_job(
-                lambda: send_azkar(chat_id, 'evening'),
+                send_azkar,
                 CronTrigger(hour=int(hour), minute=int(minute)),
+                args=[chat_id, 'evening'],
                 id=f'evening_{chat_id}'
             )
         
@@ -288,33 +290,37 @@ def schedule_azkar_jobs():
         if settings['sleep_image']:
             hour, minute = settings['sleep_time'].split(':')
             scheduler.add_job(
-                lambda: send_azkar(chat_id, 'sleep'),
+                send_azkar,
                 CronTrigger(hour=int(hour), minute=int(minute)),
+                args=[chat_id, 'sleep'],
                 id=f'sleep_{chat_id}'
             )
         
         # سورة الكهف (الخميس قبل صلاة الجمعة بساعة - 11 صباحاً)
         if settings['friday_sura']:
             scheduler.add_job(
-                lambda: send_azkar(chat_id, 'friday_kahf'),
+                send_azkar,
                 CronTrigger(day_of_week='thu', hour=11, minute=0),
+                args=[chat_id, 'friday_kahf'],
                 id=f'kahf_{chat_id}'
             )
         
         # أدعية الجمعة (الساعة 10 صباحاً يوم الجمعة)
         if settings['friday_dua']:
             scheduler.add_job(
-                lambda: send_azkar(chat_id, 'friday_dua'),
+                send_azkar,
                 CronTrigger(day_of_week='fri', hour=10, minute=0),
+                args=[chat_id, 'friday_dua'],
                 id=f'friday_dua_{chat_id}'
             )
         
         # محتوى عشوائي
         if settings['random_content'] and settings['content_interval'] > 0:
             scheduler.add_job(
-                lambda: send_random_content(chat_id),
+                send_random_content,
                 'interval',
                 minutes=settings['content_interval'],
+                args=[chat_id],
                 id=f'random_{chat_id}'
             )
 
