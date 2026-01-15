@@ -201,7 +201,42 @@ def init_db():
     conn.close()
     logger.info("Database initialized with all tables")
 
+def migrate_db():
+    """Apply database migrations for new fields."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    try:
+        # Check if media format fields exist in diverse_azkar_settings
+        c.execute("PRAGMA table_info(diverse_azkar_settings)")
+        columns = [col[1] for col in c.fetchall()]
+        
+        # Add new media format fields if they don't exist
+        if 'enable_audio' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_audio INTEGER DEFAULT 1")
+            logger.info("Added enable_audio column to diverse_azkar_settings")
+        
+        if 'enable_images' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_images INTEGER DEFAULT 1")
+            logger.info("Added enable_images column to diverse_azkar_settings")
+        
+        if 'enable_pdf' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_pdf INTEGER DEFAULT 1")
+            logger.info("Added enable_pdf column to diverse_azkar_settings")
+        
+        if 'enable_text' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_text INTEGER DEFAULT 1")
+            logger.info("Added enable_text column to diverse_azkar_settings")
+        
+        conn.commit()
+        logger.info("Database migration completed")
+    except Exception as e:
+        logger.error(f"Error during database migration: {e}", exc_info=True)
+    finally:
+        conn.close()
+
 init_db()
+migrate_db()
 
 def init_postgres_db():
     """Initialize PostgreSQL database tables if DATABASE_URL is configured."""
@@ -306,6 +341,47 @@ def init_postgres_db():
 
 # Initialize PostgreSQL if available
 init_postgres_db()
+
+def migrate_postgres_db():
+    """Apply database migrations for PostgreSQL."""
+    if not (DATABASE_URL and POSTGRES_AVAILABLE):
+        return
+    
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as c:
+                # Check if media format fields exist in diverse_azkar_settings
+                c.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='diverse_azkar_settings'
+                """)
+                columns = [col[0] for col in c.fetchall()]
+                
+                # Add new media format fields if they don't exist
+                if 'enable_audio' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_audio INTEGER DEFAULT 1")
+                    logger.info("Added enable_audio column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_images' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_images INTEGER DEFAULT 1")
+                    logger.info("Added enable_images column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_pdf' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_pdf INTEGER DEFAULT 1")
+                    logger.info("Added enable_pdf column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_text' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_text INTEGER DEFAULT 1")
+                    logger.info("Added enable_text column to diverse_azkar_settings (PostgreSQL)")
+                
+                conn.commit()
+                logger.info("PostgreSQL database migration completed")
+    except Exception as e:
+        logger.error(f"Error during PostgreSQL database migration: {e}", exc_info=True)
+
+# Run migrations
+migrate_postgres_db()
 
 # ────────────────────────────────────────────────
 #               Database Helper Functions
@@ -497,7 +573,11 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
             "enabled": bool(row[1]),
             "interval_minutes": row[2],
             "media_type": row[3],
-            "last_sent_timestamp": row[4]
+            "last_sent_timestamp": row[4],
+            "enable_audio": bool(row[5]) if len(row) > 5 else True,
+            "enable_images": bool(row[6]) if len(row) > 6 else True,
+            "enable_pdf": bool(row[7]) if len(row) > 7 else True,
+            "enable_text": bool(row[8]) if len(row) > 8 else True
         }
     except Exception as e:
         logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
@@ -507,7 +587,8 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
     # Whitelist validation to prevent SQL injection
-    allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp"}
+    allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp", 
+                    "enable_audio", "enable_images", "enable_pdf", "enable_text"}
     if key not in allowed_keys:
         logger.error(f"Invalid diverse azkar setting key: {key}")
         return
@@ -3986,6 +4067,11 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
                 types.InlineKeyboardButton("24 ساعة", callback_data=f"diverse_interval_{chat_id}_1440")
             )
             
+            # Add media format settings button
+            markup.add(
+                types.InlineKeyboardButton("🎨 إعدادات التنسيق", callback_data=f"diverse_media_format_{chat_id}")
+            )
+            
             # Add back button with chat_id encoded
             chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
             markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
@@ -4151,6 +4237,169 @@ def callback_toggle_diverse_azkar(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_diverse_azkar: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("diverse_media_format_"))
+def callback_diverse_media_format(call: types.CallbackQuery):
+    """
+    Handle callback for diverse azkar media format settings.
+    Format: diverse_media_format_{chat_id}
+    """
+    try:
+        # Parse callback data to extract chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        chat_id = int(parts[-1])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات التنسيق")
+        
+        # Get current settings
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        audio_status = "✅ مفعّل" if diverse_settings.get('enable_audio', 1) else "❌ معطّل"
+        images_status = "✅ مفعّل" if diverse_settings.get('enable_images', 1) else "❌ معطّل"
+        pdf_status = "✅ مفعّل" if diverse_settings.get('enable_pdf', 1) else "❌ معطّل"
+        text_status = "✅ مفعّل" if diverse_settings.get('enable_text', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "🎨 *إعدادات تنسيق الأدعية المتنوعة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• الصوت: {audio_status}\n"
+            f"• الصور: {images_status}\n"
+            f"• ملفات PDF: {pdf_status}\n"
+            f"• النص العادي: {text_status}\n\n"
+            "*ما هو تنسيق الإرسال؟*\n"
+            "يمكنك اختيار نوع أو أكثر من أنواع الوسائط التالية:\n\n"
+            "*🎵 الصوت:*\n"
+            "• ملفات صوتية للأدعية والقرآن\n"
+            "• تشغيل مباشر في التليجرام\n\n"
+            "*🖼️ الصور:*\n"
+            "• صور ملهمة مع الأدعية\n"
+            "• تصميمات جميلة للآيات\n\n"
+            "*📄 ملفات PDF:*\n"
+            "• كتب ومطويات\n"
+            "• نشرات دعوية\n\n"
+            "*📝 النص العادي:*\n"
+            "• نص بسيط بدون وسائط\n"
+            "• سهل القراءة والنسخ\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه لتفعيل أو تعطيل كل نوع"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Add toggle buttons for each media type
+        audio_icon = "✅" if diverse_settings.get('enable_audio', 1) else "❌"
+        images_icon = "✅" if diverse_settings.get('enable_images', 1) else "❌"
+        pdf_icon = "✅" if diverse_settings.get('enable_pdf', 1) else "❌"
+        text_icon = "✅" if diverse_settings.get('enable_text', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{audio_icon} الصوت", 
+                callback_data=f"toggle_diverse_audio_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{images_icon} الصور", 
+                callback_data=f"toggle_diverse_images_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{pdf_icon} ملفات PDF", 
+                callback_data=f"toggle_diverse_pdf_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{text_icon} النص العادي", 
+                callback_data=f"toggle_diverse_text_{chat_id}"
+            )
+        )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"diverse_azkar_settings_{chat_id}")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Diverse media format settings displayed for user {call.from_user.id} in chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_diverse_media_format: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_diverse_audio_") or 
+                                              call.data.startswith("toggle_diverse_images_") or
+                                              call.data.startswith("toggle_diverse_pdf_") or
+                                              call.data.startswith("toggle_diverse_text_"))
+def callback_toggle_diverse_media(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for diverse azkar media types.
+    Format: toggle_diverse_{type}_{chat_id}
+    """
+    try:
+        # Parse callback data
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        media_type = parts[2]  # 'audio', 'images', 'pdf', or 'text'
+        chat_id = int(parts[-1])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Map media types to setting keys and names
+        setting_map = {
+            "audio": ("enable_audio", "الصوت"),
+            "images": ("enable_images", "الصور"),
+            "pdf": ("enable_pdf", "ملفات PDF"),
+            "text": ("enable_text", "النص العادي")
+        }
+        
+        if media_type not in setting_map:
+            bot.answer_callback_query(call.id, "⚠️ نوع غير معروف", show_alert=True)
+            return
+        
+        setting_key, setting_name = setting_map[media_type]
+        
+        # Get current settings and toggle
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        new_value = not diverse_settings.get(setting_key, 1)
+        update_diverse_azkar_setting(chat_id, setting_key, new_value)
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        # Refresh the media format settings view
+        call.data = f"diverse_media_format_{chat_id}"
+        callback_diverse_media_format(call)
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_diverse_media: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
