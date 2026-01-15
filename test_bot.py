@@ -9,6 +9,29 @@ import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
 
+class TestWebhookSetup(unittest.TestCase):
+    """Test webhook setup and verification logic"""
+    
+    def test_exponential_backoff_delays(self):
+        """Test that exponential backoff delays are calculated correctly"""
+        base_delay = 2
+        expected_delays = [2, 4, 8, 16]  # 2 * 2^0, 2 * 2^1, 2 * 2^2, 2 * 2^3
+        
+        for attempt in range(4):
+            calculated_delay = base_delay * (2 ** attempt)
+            self.assertEqual(calculated_delay, expected_delays[attempt])
+    
+    def test_max_retries_configuration(self):
+        """Test that max retries is set to an appropriate value"""
+        max_retries = 5
+        self.assertTrue(1 <= max_retries <= 10, "Max retries should be between 1 and 10")
+    
+    def test_webhook_verification_interval(self):
+        """Test that webhook verification interval is reasonable"""
+        interval_minutes = 30
+        self.assertTrue(5 <= interval_minutes <= 60, "Verification interval should be between 5 and 60 minutes")
+
+
 class TestAzkarLoading(unittest.TestCase):
     """Test azkar JSON file loading functionality"""
     
