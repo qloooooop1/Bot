@@ -1839,23 +1839,6 @@ def callback_friday_settings(call: types.CallbackQuery):
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
             pass
-        
-        bot.edit_message_text(
-            settings_text,
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-        
-        logger.info(f"Advanced settings displayed for user {call.from_user.id}")
-        
-    except Exception as e:
-        logger.error(f"Error in callback_advanced_settings: {e}", exc_info=True)
-        try:
-            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
-        except Exception:
-            pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "media_settings")
 def callback_media_settings(call: types.CallbackQuery):
@@ -2495,12 +2478,12 @@ def cmd_status(message: types.Message):
         "📊 *حالة البوت*\n\n"
         f"البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
         "*الميزات المفعلة:*\n"
-        f"🌅 أذكار الصباح: {'✓' if settings['morning_azkar'] else '✗'}\n"
-        f"🌙 أذكار المساء: {'✓' if settings['evening_azkar'] else '✗'}\n"
-        f"📿 سورة الكهف: {'✓' if settings['friday_sura'] else '✗'}\n"
-        f"🕌 أدعية الجمعة: {'✓' if settings['friday_dua'] else '✗'}\n"
-        f"😴 رسالة النوم: {'✓' if settings['sleep_message'] else '✗'}\n"
-        f"🗑️ حذف رسائل الخدمة: {'✓' if settings['delete_service_messages'] else '✗'}\n\n"
+        f"🌅 أذكار الصباح: {'✅' if settings['morning_azkar'] else '❌'}\n"
+        f"🌙 أذكار المساء: {'✅' if settings['evening_azkar'] else '❌'}\n"
+        f"📿 سورة الكهف: {'✅' if settings['friday_sura'] else '❌'}\n"
+        f"🕌 أدعية الجمعة: {'✅' if settings['friday_dua'] else '❌'}\n"
+        f"😴 رسالة النوم: {'✅' if settings['sleep_message'] else '❌'}\n"
+        f"🗑️ حذف رسائل الخدمة: {'✅' if settings['delete_service_messages'] else '❌'}\n\n"
         "*الأوقات:*\n"
         f"🌅 الصباح: {settings['morning_time']}\n"
         f"🌙 المساء: {settings['evening_time']}\n"
