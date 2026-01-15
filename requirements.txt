@@ -1,2 +1,4 @@
 pyTelegramBotAPI
-flask
+APScheduler
+python-dotenv
+Pillow
