@@ -2494,6 +2494,23 @@ def callback_select_group(call: types.CallbackQuery):
         except Exception:
             pass
 
+@bot.callback_query_handler(func=lambda call: call.data == "settings_panel")
+def callback_settings_panel(call: types.CallbackQuery):
+    """
+    Handle callback for settings_panel button.
+    Redirects to main settings panel (open_settings).
+    """
+    try:
+        # Redirect to open_settings
+        call.data = "open_settings"
+        callback_open_settings(call)
+    except Exception as e:
+        logger.error(f"Error in callback_settings_panel: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
 @bot.callback_query_handler(func=lambda call: call.data == "advanced_settings")
 def callback_advanced_settings(call: types.CallbackQuery):
     """
@@ -2515,7 +2532,7 @@ def callback_advanced_settings(call: types.CallbackQuery):
 def callback_morning_evening_settings(call: types.CallbackQuery):
     """
     Handle callback for morning and evening azkar settings.
-    Shows options to enable/disable and configure timing.
+    Shows options to enable/disable and configure timing with toggle controls.
     Supports both old format (morning_evening_settings) and new format (morning_evening_settings_{chat_id})
     """
     try:
@@ -2546,43 +2563,91 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         
         bot.answer_callback_query(call.id, "أذكار الصباح والمساء")
         
-        settings_text = (
-            "🌅🌙 *إعدادات أذكار الصباح والمساء*\n\n"
-            "*أذكار الصباح:*\n"
-            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
-            "• الوقت الافتراضي: 05:00\n"
-            "• قابلة للتخصيص لكل مجموعة\n\n"
-            "*أذكار المساء:*\n"
-            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
-            "• الوقت الافتراضي: 18:00\n"
-            "• قابلة للتخصيص لكل مجموعة\n\n"
-            "*الميزات:*\n"
-            "• ✅/❌ تفعيل أو تعطيل لكل مجموعة\n"
-            "• دعم الوسائط (صور، فيديو، ملفات)\n"
-            "• تخصيص الأوقات باستخدام `/settime` في المجموعة\n\n"
-            "*أمثلة لتخصيص الأوقات:*\n"
-            "`/settime morning 06:30`\n"
-            "`/settime evening 19:00`\n\n"
-            "*للتعديل في مجموعة معينة:*\n"
-            "استخدم الأوامر المذكورة في المجموعة التي تريد تخصيص أوقاتها"
-        )
+        # Get settings for this specific chat (or show general info)
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            morning_status = "✅ مفعّل" if settings.get('morning_azkar', 1) else "❌ معطّل"
+            evening_status = "✅ مفعّل" if settings.get('evening_azkar', 1) else "❌ معطّل"
+            morning_time = settings.get('morning_time', '05:00')
+            evening_time = settings.get('evening_time', '18:00')
+            
+            settings_text = (
+                "🌅🌙 *إعدادات أذكار الصباح والمساء*\n\n"
+                f"*الحالة الحالية:*\n"
+                f"• أذكار الصباح: {morning_status} (الوقت: {morning_time})\n"
+                f"• أذكار المساء: {evening_status} (الوقت: {evening_time})\n\n"
+                "*أذكار الصباح:*\n"
+                "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+                "• الوقت الافتراضي: 05:00\n"
+                "• قابلة للتخصيص لكل مجموعة\n\n"
+                "*أذكار المساء:*\n"
+                "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+                "• الوقت الافتراضي: 18:00\n"
+                "• قابلة للتخصيص لكل مجموعة\n\n"
+                "*التحكم:*\n"
+                "استخدم الأزرار أدناه للتفعيل/التعطيل"
+            )
+        else:
+            settings_text = (
+                "🌅🌙 *إعدادات أذكار الصباح والمساء*\n\n"
+                "*أذكار الصباح:*\n"
+                "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+                "• الوقت الافتراضي: 05:00\n"
+                "• قابلة للتخصيص لكل مجموعة\n\n"
+                "*أذكار المساء:*\n"
+                "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+                "• الوقت الافتراضي: 18:00\n"
+                "• قابلة للتخصيص لكل مجموعة\n\n"
+                "*الميزات:*\n"
+                "• ✅/❌ تفعيل أو تعطيل لكل مجموعة\n"
+                "• دعم الوسائط (صور، فيديو، ملفات)\n"
+                "• تخصيص الأوقات باستخدام `/settime` في المجموعة\n\n"
+                "*أمثلة لتخصيص الأوقات:*\n"
+                "`/settime morning 06:30`\n"
+                "`/settime evening 19:00`\n\n"
+                "*للتعديل في مجموعة معينة:*\n"
+                "استخدم الأوامر المذكورة في المجموعة التي تريد تخصيص أوقاتها"
+            )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data="morning_time_presets"),
-            types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data="evening_time_presets")
-        )
         
-        # Add back button with appropriate callback data
+        # Add toggle buttons if chat_id is specified
         if chat_id:
-            # New format: go back to group-specific settings
+            settings = get_chat_settings(chat_id)
+            morning_icon = "✅" if settings.get('morning_azkar', 1) else "❌"
+            evening_icon = "✅" if settings.get('evening_azkar', 1) else "❌"
+            
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{morning_icon} أذكار الصباح", 
+                    callback_data=f"toggle_morning_azkar_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{evening_icon} أذكار المساء", 
+                    callback_data=f"toggle_evening_azkar_{chat_id}"
+                )
+            )
+            
+            # Add time preset buttons
+            markup.add(
+                types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data=f"morning_time_presets_{chat_id}"),
+                types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data=f"evening_time_presets_{chat_id}")
+            )
+            
+            # Add back button with chat_id encoded
             chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
             markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
         else:
+            markup.add(
+                types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data="morning_time_presets"),
+                types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data="evening_time_presets")
+            )
             # Old format: go back to general settings
             markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
         
-        add_support_buttons(markup)
+        # Only add support buttons in main settings (not group-specific)
+        if chat_id is None:
+            add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2693,44 +2758,106 @@ def callback_evening_time_presets(call: types.CallbackQuery):
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "friday_settings")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("friday_settings"))
 def callback_friday_settings(call: types.CallbackQuery):
     """
     Handle callback for Friday prayers settings.
-    Shows options for Surat Al-Kahf and Friday duas.
+    Shows options for Surat Al-Kahf and Friday duas with toggle controls.
+    Supports both old format (friday_settings) and new format (friday_settings_{chat_id})
     """
     try:
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        # Extract chat_id from callback data if present
+        chat_id = None
+        if "_" in call.data and call.data.count("_") >= 2:
+            # New format: friday_settings_{chat_id}
+            parts = call.data.split("_")
+            try:
+                chat_id = int(parts[-1])
+                # Verify user is admin of this chat
+                if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                    return
+            except (ValueError, IndexError):
+                # Fallback to old behavior
+                chat_id = None
         
-        if not is_admin:
-            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
-            return
+        # If no chat_id, verify user is admin in any group
+        if chat_id is None:
+            is_admin = is_user_admin_in_any_group(call.from_user.id)
+            if not is_admin:
+                bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                return
+        
+        # Get settings for this specific chat (or show general info)
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            friday_sura_status = "✅ مفعّل" if settings.get('friday_sura', 1) else "❌ معطّل"
+            friday_dua_status = "✅ مفعّل" if settings.get('friday_dua', 1) else "❌ معطّل"
+            
+            settings_text = (
+                "📿🕌 *إعدادات أدعية الجمعة*\n\n"
+                f"*الحالة الحالية:*\n"
+                f"• سورة الكهف: {friday_sura_status}\n"
+                f"• أدعية الجمعة: {friday_dua_status}\n\n"
+                "*سورة الكهف:*\n"
+                "• تُرسل تلقائياً كل يوم جمعة\n"
+                "• الوقت: الجمعة 09:00\n"
+                "• يمكن إرسالها مع صور أو فيديو إسلامي\n\n"
+                "*أدعية الجمعة:*\n"
+                "• أدعية وأذكار خاصة بيوم الجمعة\n"
+                "• الوقت: الجمعة 10:00\n"
+                "• تشمل أدعية مستجابة في ساعة الإجابة\n\n"
+                "*التحكم:*\n"
+                "استخدم الأزرار أدناه للتفعيل/التعطيل"
+            )
+        else:
+            settings_text = (
+                "📿🕌 *إعدادات أدعية الجمعة*\n\n"
+                "*سورة الكهف:*\n"
+                "• تُرسل تلقائياً كل يوم جمعة\n"
+                "• الوقت: الجمعة 09:00\n"
+                "• يمكن إرسالها مع صور أو فيديو إسلامي\n\n"
+                "*أدعية الجمعة:*\n"
+                "• أدعية وأذكار خاصة بيوم الجمعة\n"
+                "• الوقت: الجمعة 10:00\n"
+                "• تشمل أدعية مستجابة في ساعة الإجابة\n\n"
+                "*الميزات:*\n"
+                "• ✅/❌ تفعيل أو تعطيل كل ميزة على حدة\n"
+                "• دعم إرسال الوسائط المتعددة\n"
+                "• إعدادات مستقلة لكل مجموعة\n\n"
+                "*للتعديل في مجموعة معينة:*\n"
+                "استخدم `/start` في المجموعة واختر الميزات المطلوبة"
+            )
         
         bot.answer_callback_query(call.id, "أدعية الجمعة")
         
-        settings_text = (
-            "📿🕌 *إعدادات أدعية الجمعة*\n\n"
-            "*سورة الكهف:*\n"
-            "• تُرسل تلقائياً كل يوم جمعة\n"
-            "• الوقت: الجمعة 09:00\n"
-            "• يمكن إرسالها مع صور أو فيديو إسلامي\n\n"
-            "*أدعية الجمعة:*\n"
-            "• أدعية وأذكار خاصة بيوم الجمعة\n"
-            "• الوقت: الجمعة 10:00\n"
-            "• تشمل أدعية مستجابة في ساعة الإجابة\n\n"
-            "*الميزات:*\n"
-            "• ✅/❌ تفعيل أو تعطيل كل ميزة على حدة\n"
-            "• دعم إرسال الوسائط المتعددة\n"
-            "• إعدادات مستقلة لكل مجموعة\n\n"
-            "*للتعديل في مجموعة معينة:*\n"
-            "استخدم `/start` في المجموعة واختر الميزات المطلوبة"
-        )
-        
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
-        )
-        add_support_buttons(markup)
+        
+        # Add toggle buttons if chat_id is specified
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            friday_sura_icon = "✅" if settings.get('friday_sura', 1) else "❌"
+            friday_dua_icon = "✅" if settings.get('friday_dua', 1) else "❌"
+            
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{friday_sura_icon} سورة الكهف", 
+                    callback_data=f"toggle_friday_sura_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{friday_dua_icon} أدعية الجمعة", 
+                    callback_data=f"toggle_friday_dua_{chat_id}"
+                )
+            )
+            # Add back button with chat_id encoded
+            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        else:
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        
+        # Only add support buttons in main settings (not group-specific)
+        if chat_id is None:
+            add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2740,7 +2867,7 @@ def callback_friday_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Friday settings displayed for user {call.from_user.id}")
+        logger.info(f"Friday settings displayed for user {call.from_user.id}, chat_id={chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_friday_settings: {e}", exc_info=True)
@@ -2836,6 +2963,230 @@ def callback_media_type(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_media_type: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_friday_"))
+def callback_toggle_friday(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for Friday settings (Sura Al-Kahf and Friday duas).
+    Format: toggle_friday_sura_{chat_id} or toggle_friday_dua_{chat_id}
+    """
+    try:
+        # Parse callback data to extract setting name and chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        # Extract setting type and chat_id
+        # Format: toggle_friday_sura_{chat_id} or toggle_friday_dua_{chat_id}
+        setting_type = parts[2]  # 'sura' or 'dua'
+        chat_id = int(parts[3])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Get current settings
+        settings = get_chat_settings(chat_id)
+        
+        # Determine the setting key
+        if setting_type == "sura":
+            setting_key = "friday_sura"
+            setting_name = "سورة الكهف"
+        elif setting_type == "dua":
+            setting_key = "friday_dua"
+            setting_name = "أدعية الجمعة"
+        else:
+            bot.answer_callback_query(call.id, "⚠️ إعداد غير معروف", show_alert=True)
+            return
+        
+        # Toggle the setting
+        new_value = not settings.get(setting_key, 1)
+        update_chat_setting(chat_id, setting_key, new_value)
+        
+        # Reschedule jobs
+        schedule_chat_jobs(chat_id)
+        
+        # Prepare updated message
+        settings = get_chat_settings(chat_id)
+        friday_sura_status = "✅ مفعّل" if settings.get('friday_sura', 1) else "❌ معطّل"
+        friday_dua_status = "✅ مفعّل" if settings.get('friday_dua', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "📿🕌 *إعدادات أدعية الجمعة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• سورة الكهف: {friday_sura_status}\n"
+            f"• أدعية الجمعة: {friday_dua_status}\n\n"
+            "*سورة الكهف:*\n"
+            "• تُرسل تلقائياً كل يوم جمعة\n"
+            "• الوقت: الجمعة 09:00\n"
+            "• يمكن إرسالها مع صور أو فيديو إسلامي\n\n"
+            "*أدعية الجمعة:*\n"
+            "• أدعية وأذكار خاصة بيوم الجمعة\n"
+            "• الوقت: الجمعة 10:00\n"
+            "• تشمل أدعية مستجابة في ساعة الإجابة\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        friday_sura_icon = "✅" if settings.get('friday_sura', 1) else "❌"
+        friday_dua_icon = "✅" if settings.get('friday_dua', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{friday_sura_icon} سورة الكهف", 
+                callback_data=f"toggle_friday_sura_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{friday_dua_icon} أدعية الجمعة", 
+                callback_data=f"toggle_friday_dua_{chat_id}"
+            )
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_friday: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_morning_azkar_") or call.data.startswith("toggle_evening_azkar_"))
+def callback_toggle_morning_evening(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for morning and evening azkar.
+    Format: toggle_morning_azkar_{chat_id} or toggle_evening_azkar_{chat_id}
+    """
+    try:
+        # Parse callback data to extract setting name and chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        # Extract setting type and chat_id
+        # Format: toggle_morning_azkar_{chat_id} or toggle_evening_azkar_{chat_id}
+        setting_type = parts[1]  # 'morning' or 'evening'
+        chat_id = int(parts[-1])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Get current settings
+        settings = get_chat_settings(chat_id)
+        
+        # Determine the setting key
+        if setting_type == "morning":
+            setting_key = "morning_azkar"
+            setting_name = "أذكار الصباح"
+        elif setting_type == "evening":
+            setting_key = "evening_azkar"
+            setting_name = "أذكار المساء"
+        else:
+            bot.answer_callback_query(call.id, "⚠️ إعداد غير معروف", show_alert=True)
+            return
+        
+        # Toggle the setting
+        new_value = not settings.get(setting_key, 1)
+        update_chat_setting(chat_id, setting_key, new_value)
+        
+        # Reschedule jobs
+        schedule_chat_jobs(chat_id)
+        
+        # Prepare updated message
+        settings = get_chat_settings(chat_id)
+        morning_status = "✅ مفعّل" if settings.get('morning_azkar', 1) else "❌ معطّل"
+        evening_status = "✅ مفعّل" if settings.get('evening_azkar', 1) else "❌ معطّل"
+        morning_time = settings.get('morning_time', '05:00')
+        evening_time = settings.get('evening_time', '18:00')
+        
+        settings_text = (
+            "🌅🌙 *إعدادات أذكار الصباح والمساء*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• أذكار الصباح: {morning_status} (الوقت: {morning_time})\n"
+            f"• أذكار المساء: {evening_status} (الوقت: {evening_time})\n\n"
+            "*أذكار الصباح:*\n"
+            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+            "• الوقت الافتراضي: 05:00\n"
+            "• قابلة للتخصيص لكل مجموعة\n\n"
+            "*أذكار المساء:*\n"
+            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+            "• الوقت الافتراضي: 18:00\n"
+            "• قابلة للتخصيص لكل مجموعة\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        morning_icon = "✅" if settings.get('morning_azkar', 1) else "❌"
+        evening_icon = "✅" if settings.get('evening_azkar', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{morning_icon} أذكار الصباح", 
+                callback_data=f"toggle_morning_azkar_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{evening_icon} أذكار المساء", 
+                callback_data=f"toggle_evening_azkar_{chat_id}"
+            )
+        )
+        
+        # Add time preset buttons
+        markup.add(
+            types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data=f"morning_time_presets_{chat_id}"),
+            types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data=f"evening_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_morning_evening: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -2996,40 +3347,117 @@ def callback_diverse_interval(call: types.CallbackQuery):
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "ramadan_settings")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ramadan_settings"))
 def callback_ramadan_settings(call: types.CallbackQuery):
     """
     Handle callback for Ramadan settings panel.
+    Supports both old format (ramadan_settings) and new format (ramadan_settings_{chat_id})
     """
     try:
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        # Extract chat_id from callback data if present
+        chat_id = None
+        if "_" in call.data and call.data.count("_") >= 2:
+            # New format: ramadan_settings_{chat_id}
+            parts = call.data.split("_")
+            try:
+                chat_id = int(parts[-1])
+                # Verify user is admin of this chat
+                if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                    return
+            except (ValueError, IndexError):
+                # Fallback to old behavior
+                chat_id = None
         
-        if not is_admin:
-            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
-            return
+        # If no chat_id, verify user is admin in any group
+        if chat_id is None:
+            is_admin = is_user_admin_in_any_group(call.from_user.id)
+            if not is_admin:
+                bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                return
         
         bot.answer_callback_query(call.id, "إعدادات رمضان")
         
-        settings_text = (
-            "🌙 *إعدادات رمضان*\n\n"
-            "*الأقسام المتاحة:*\n\n"
-            "*1. ليلة القدر:*\n"
-            "أدعية خاصة بليلة القدر المباركة\n"
-            "يتم إرسالها في الليالي الوترية من العشر الأواخر\n\n"
-            "*2. العشر الأواخر من رمضان:*\n"
-            "أذكار وأدعية خاصة بالعشر الأواخر\n"
-            "تبدأ من اليوم 21 من رمضان\n\n"
-            "*3. دعاء الإفطار:*\n"
-            "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
-            "*للتفعيل:*\n"
-            "استخدم `/start` في المجموعة وفعّل الميزات المطلوبة"
-        )
+        # Get settings for this specific chat (or show general info)
+        if chat_id:
+            ramadan_settings = get_ramadan_settings(chat_id)
+            ramadan_status = "✅ مفعّل" if ramadan_settings.get('ramadan_enabled', 1) else "❌ معطّل"
+            laylat_alqadr_status = "✅ مفعّل" if ramadan_settings.get('laylat_alqadr_enabled', 1) else "❌ معطّل"
+            last_ten_status = "✅ مفعّل" if ramadan_settings.get('last_ten_days_enabled', 1) else "❌ معطّل"
+            iftar_status = "✅ مفعّل" if ramadan_settings.get('iftar_dua_enabled', 1) else "❌ معطّل"
+            
+            settings_text = (
+                "🌙 *إعدادات رمضان*\n\n"
+                f"*الحالة الحالية:*\n"
+                f"• أدعية رمضان: {ramadan_status}\n"
+                f"• ليلة القدر: {laylat_alqadr_status}\n"
+                f"• العشر الأواخر: {last_ten_status}\n"
+                f"• دعاء الإفطار: {iftar_status}\n\n"
+                "*الأقسام المتاحة:*\n\n"
+                "*1. ليلة القدر:*\n"
+                "أدعية خاصة بليلة القدر المباركة\n"
+                "يتم إرسالها في الليالي الوترية من العشر الأواخر\n\n"
+                "*2. العشر الأواخر من رمضان:*\n"
+                "أذكار وأدعية خاصة بالعشر الأواخر\n"
+                "تبدأ من اليوم 21 من رمضان\n\n"
+                "*3. دعاء الإفطار:*\n"
+                "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
+                "*التحكم:*\n"
+                "استخدم الأزرار أدناه للتفعيل/التعطيل"
+            )
+        else:
+            settings_text = (
+                "🌙 *إعدادات رمضان*\n\n"
+                "*الأقسام المتاحة:*\n\n"
+                "*1. ليلة القدر:*\n"
+                "أدعية خاصة بليلة القدر المباركة\n"
+                "يتم إرسالها في الليالي الوترية من العشر الأواخر\n\n"
+                "*2. العشر الأواخر من رمضان:*\n"
+                "أذكار وأدعية خاصة بالعشر الأواخر\n"
+                "تبدأ من اليوم 21 من رمضان\n\n"
+                "*3. دعاء الإفطار:*\n"
+                "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
+                "*للتفعيل:*\n"
+                "استخدم `/start` في المجموعة وفعّل الميزات المطلوبة"
+            )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
-        )
-        add_support_buttons(markup)
+        
+        # Add toggle buttons if chat_id is specified
+        if chat_id:
+            ramadan_settings = get_ramadan_settings(chat_id)
+            ramadan_icon = "✅" if ramadan_settings.get('ramadan_enabled', 1) else "❌"
+            laylat_alqadr_icon = "✅" if ramadan_settings.get('laylat_alqadr_enabled', 1) else "❌"
+            last_ten_icon = "✅" if ramadan_settings.get('last_ten_days_enabled', 1) else "❌"
+            iftar_icon = "✅" if ramadan_settings.get('iftar_dua_enabled', 1) else "❌"
+            
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{ramadan_icon} أدعية رمضان", 
+                    callback_data=f"toggle_ramadan_enabled_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{laylat_alqadr_icon} ليلة القدر", 
+                    callback_data=f"toggle_ramadan_laylat_alqadr_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{last_ten_icon} العشر الأواخر", 
+                    callback_data=f"toggle_ramadan_last_ten_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{iftar_icon} دعاء الإفطار", 
+                    callback_data=f"toggle_ramadan_iftar_{chat_id}"
+                )
+            )
+            # Add back button with chat_id encoded
+            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        else:
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        
+        # Only add support buttons in main settings (not group-specific)
+        if chat_id is None:
+            add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -3039,7 +3467,7 @@ def callback_ramadan_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Ramadan settings displayed for user {call.from_user.id}")
+        logger.info(f"Ramadan settings displayed for user {call.from_user.id}, chat_id={chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_ramadan_settings: {e}", exc_info=True)
@@ -3048,46 +3476,136 @@ def callback_ramadan_settings(call: types.CallbackQuery):
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "hajj_eid_settings")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("hajj_eid_settings"))
 def callback_hajj_eid_settings(call: types.CallbackQuery):
     """
     Handle callback for Hajj and Eid settings panel.
+    Supports both old format (hajj_eid_settings) and new format (hajj_eid_settings_{chat_id})
     """
     try:
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        # Extract chat_id from callback data if present
+        chat_id = None
+        if "_" in call.data and call.data.count("_") >= 3:
+            # New format: hajj_eid_settings_{chat_id}
+            parts = call.data.split("_")
+            try:
+                chat_id = int(parts[-1])
+                # Verify user is admin of this chat
+                if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                    return
+            except (ValueError, IndexError):
+                # Fallback to old behavior
+                chat_id = None
         
-        if not is_admin:
-            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
-            return
+        # If no chat_id, verify user is admin in any group
+        if chat_id is None:
+            is_admin = is_user_admin_in_any_group(call.from_user.id)
+            if not is_admin:
+                bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                return
         
         bot.answer_callback_query(call.id, "إعدادات الحج والعيد")
         
-        settings_text = (
-            "🕋 *إعدادات الحج والعيد*\n\n"
-            "*أقسام الحج:*\n\n"
-            "*1. يوم عرفة:*\n"
-            "أدعية خاصة بيوم عرفة المبارك (9 ذو الحجة)\n"
-            "خير الدعاء دعاء يوم عرفة\n\n"
-            "*2. أذكار الحج:*\n"
-            "التلبية وأدعية الحج والعمرة\n\n"
-            "*أقسام العيد:*\n\n"
-            "*1. ليلة العيد:*\n"
-            "أدعية ليلة العيد المباركة\n"
-            "تُرسل في ليلة 29 أو 30 رمضان\n\n"
-            "*2. يوم العيد:*\n"
-            "تكبيرات العيد وأدعية يوم العيد\n"
-            "تُرسل في أول أيام العيد\n\n"
-            "*3. عيد الأضحى:*\n"
-            "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
-            "*للتفعيل:*\n"
-            "استخدم `/start` في المجموعة"
-        )
+        # Get settings for this specific chat (or show general info)
+        if chat_id:
+            hajj_settings = get_hajj_eid_settings(chat_id)
+            arafah_status = "✅ مفعّل" if hajj_settings.get('arafah_day_enabled', 1) else "❌ معطّل"
+            eid_eve_status = "✅ مفعّل" if hajj_settings.get('eid_eve_enabled', 1) else "❌ معطّل"
+            eid_day_status = "✅ مفعّل" if hajj_settings.get('eid_day_enabled', 1) else "❌ معطّل"
+            eid_adha_status = "✅ مفعّل" if hajj_settings.get('eid_adha_enabled', 1) else "❌ معطّل"
+            hajj_status = "✅ مفعّل" if hajj_settings.get('hajj_enabled', 1) else "❌ معطّل"
+            
+            settings_text = (
+                "🕋 *إعدادات الحج والعيد*\n\n"
+                f"*الحالة الحالية:*\n"
+                f"• يوم عرفة: {arafah_status}\n"
+                f"• ليلة العيد: {eid_eve_status}\n"
+                f"• يوم العيد: {eid_day_status}\n"
+                f"• عيد الأضحى: {eid_adha_status}\n"
+                f"• أذكار الحج: {hajj_status}\n\n"
+                "*أقسام الحج:*\n\n"
+                "*1. يوم عرفة:*\n"
+                "أدعية خاصة بيوم عرفة المبارك (9 ذو الحجة)\n"
+                "خير الدعاء دعاء يوم عرفة\n\n"
+                "*2. أذكار الحج:*\n"
+                "التلبية وأدعية الحج والعمرة\n\n"
+                "*أقسام العيد:*\n\n"
+                "*1. ليلة العيد:*\n"
+                "أدعية ليلة العيد المباركة\n"
+                "تُرسل في ليلة 29 أو 30 رمضان\n\n"
+                "*2. يوم العيد:*\n"
+                "تكبيرات العيد وأدعية يوم العيد\n"
+                "تُرسل في أول أيام العيد\n\n"
+                "*3. عيد الأضحى:*\n"
+                "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
+                "*التحكم:*\n"
+                "استخدم الأزرار أدناه للتفعيل/التعطيل"
+            )
+        else:
+            settings_text = (
+                "🕋 *إعدادات الحج والعيد*\n\n"
+                "*أقسام الحج:*\n\n"
+                "*1. يوم عرفة:*\n"
+                "أدعية خاصة بيوم عرفة المبارك (9 ذو الحجة)\n"
+                "خير الدعاء دعاء يوم عرفة\n\n"
+                "*2. أذكار الحج:*\n"
+                "التلبية وأدعية الحج والعمرة\n\n"
+                "*أقسام العيد:*\n\n"
+                "*1. ليلة العيد:*\n"
+                "أدعية ليلة العيد المباركة\n"
+                "تُرسل في ليلة 29 أو 30 رمضان\n\n"
+                "*2. يوم العيد:*\n"
+                "تكبيرات العيد وأدعية يوم العيد\n"
+                "تُرسل في أول أيام العيد\n\n"
+                "*3. عيد الأضحى:*\n"
+                "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
+                "*للتفعيل:*\n"
+                "استخدم `/start` في المجموعة"
+            )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
-        )
-        add_support_buttons(markup)
+        
+        # Add toggle buttons if chat_id is specified
+        if chat_id:
+            hajj_settings = get_hajj_eid_settings(chat_id)
+            arafah_icon = "✅" if hajj_settings.get('arafah_day_enabled', 1) else "❌"
+            eid_eve_icon = "✅" if hajj_settings.get('eid_eve_enabled', 1) else "❌"
+            eid_day_icon = "✅" if hajj_settings.get('eid_day_enabled', 1) else "❌"
+            eid_adha_icon = "✅" if hajj_settings.get('eid_adha_enabled', 1) else "❌"
+            hajj_icon = "✅" if hajj_settings.get('hajj_enabled', 1) else "❌"
+            
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{arafah_icon} يوم عرفة", 
+                    callback_data=f"toggle_hajj_eid_arafah_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{eid_eve_icon} ليلة العيد", 
+                    callback_data=f"toggle_hajj_eid_eve_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{eid_day_icon} يوم العيد", 
+                    callback_data=f"toggle_hajj_eid_day_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{eid_adha_icon} عيد الأضحى", 
+                    callback_data=f"toggle_hajj_eid_adha_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{hajj_icon} أذكار الحج", 
+                    callback_data=f"toggle_hajj_eid_hajj_{chat_id}"
+                )
+            )
+            # Add back button with chat_id encoded
+            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        else:
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        
+        # Only add support buttons in main settings (not group-specific)
+        if chat_id is None:
+            add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -3097,7 +3615,7 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Hajj/Eid settings displayed for user {call.from_user.id}")
+        logger.info(f"Hajj/Eid settings displayed for user {call.from_user.id}, chat_id={chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_hajj_eid_settings: {e}", exc_info=True)
@@ -3106,50 +3624,129 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "fasting_reminders_settings")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fasting_reminders"))
 def callback_fasting_reminders_settings(call: types.CallbackQuery):
     """
     Handle callback for fasting reminders settings panel.
+    Supports both old format (fasting_reminders_settings) and new format (fasting_reminders_{chat_id})
     """
     try:
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        # Extract chat_id from callback data if present
+        chat_id = None
+        # Check if this is the group-specific format (fasting_reminders_{chat_id})
+        # vs the general settings format (fasting_reminders_settings)
+        if call.data != "fasting_reminders_settings":
+            # New format: fasting_reminders_{chat_id}
+            parts = call.data.split("_")
+            try:
+                chat_id = int(parts[-1])
+                # Verify user is admin of this chat
+                if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                    return
+            except (ValueError, IndexError):
+                # Fallback to old behavior
+                chat_id = None
         
-        if not is_admin:
-            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
-            return
+        # If no chat_id, verify user is admin in any group
+        if chat_id is None:
+            is_admin = is_user_admin_in_any_group(call.from_user.id)
+            if not is_admin:
+                bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                return
         
         bot.answer_callback_query(call.id, "تذكيرات الصيام")
         
-        settings_text = (
-            "🌙 *تذكيرات الصيام*\n\n"
-            "*تذكير بصيام الاثنين والخميس:*\n"
-            "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
-            "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
-            "• قابل للتخصيص من خلال الأمر `/setfastingtime`\n\n"
-            "*فضل صيام الاثنين والخميس:*\n"
-            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، "
-            "فأحب أن يُعرض عملي وأنا صائم\"\n\n"
-            "*تذكير بصيام يوم عرفة:*\n"
-            "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
-            "• يوم عرفة هو التاسع من ذي الحجة\n\n"
-            "*فضل صيام يوم عرفة:*\n"
-            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر "
-            "السنة التي قبله، والسنة التي بعده\"\n\n"
-            "*لتخصيص وقت التذكير:*\n"
-            "استخدم الأمر في المجموعة:\n"
-            "`/setfastingtime HH:MM`\n\n"
-            "*مثال:*\n"
-            "`/setfastingtime 20:00`\n\n"
-            "*للتفعيل في مجموعة:*\n"
-            "سيتم إضافة خيارات التفعيل/التعطيل في القائمة أدناه"
-        )
+        # Get settings for this specific chat (or show general info)
+        if chat_id:
+            fasting_settings = get_fasting_reminders_settings(chat_id)
+            monday_thursday_status = "✅ مفعّل" if fasting_settings.get('monday_thursday_enabled', 1) else "❌ معطّل"
+            arafah_status = "✅ مفعّل" if fasting_settings.get('arafah_reminder_enabled', 1) else "❌ معطّل"
+            reminder_time = fasting_settings.get('reminder_time', '21:00')
+            
+            settings_text = (
+                "🌙 *تذكيرات الصيام*\n\n"
+                f"*الحالة الحالية:*\n"
+                f"• صيام الاثنين والخميس: {monday_thursday_status}\n"
+                f"• صيام يوم عرفة: {arafah_status}\n"
+                f"• وقت التذكير: {reminder_time}\n\n"
+                "*تذكير بصيام الاثنين والخميس:*\n"
+                "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
+                "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
+                "• قابل للتخصيص من خلال الأمر `/setfastingtime`\n\n"
+                "*فضل صيام الاثنين والخميس:*\n"
+                "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، "
+                "فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+                "*تذكير بصيام يوم عرفة:*\n"
+                "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
+                "• يوم عرفة هو التاسع من ذي الحجة\n\n"
+                "*فضل صيام يوم عرفة:*\n"
+                "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر "
+                "السنة التي قبله، والسنة التي بعده\"\n\n"
+                "*التحكم:*\n"
+                "استخدم الأزرار أدناه للتفعيل/التعطيل"
+            )
+        else:
+            settings_text = (
+                "🌙 *تذكيرات الصيام*\n\n"
+                "*تذكير بصيام الاثنين والخميس:*\n"
+                "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
+                "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
+                "• قابل للتخصيص من خلال الأمر `/setfastingtime`\n\n"
+                "*فضل صيام الاثنين والخميس:*\n"
+                "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، "
+                "فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+                "*تذكير بصيام يوم عرفة:*\n"
+                "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
+                "• يوم عرفة هو التاسع من ذي الحجة\n\n"
+                "*فضل صيام يوم عرفة:*\n"
+                "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر "
+                "السنة التي قبله، والسنة التي بعده\"\n\n"
+                "*لتخصيص وقت التذكير:*\n"
+                "استخدم الأمر في المجموعة:\n"
+                "`/setfastingtime HH:MM`\n\n"
+                "*مثال:*\n"
+                "`/setfastingtime 20:00`\n\n"
+                "*للتفعيل في مجموعة:*\n"
+                "سيتم إضافة خيارات التفعيل/التعطيل في القائمة أدناه"
+            )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("⏰ أوقات شائعة للتذكير", callback_data="fasting_time_presets"),
-            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
-        )
-        add_support_buttons(markup)
+        
+        # Add toggle buttons if chat_id is specified
+        if chat_id:
+            fasting_settings = get_fasting_reminders_settings(chat_id)
+            monday_thursday_icon = "✅" if fasting_settings.get('monday_thursday_enabled', 1) else "❌"
+            arafah_icon = "✅" if fasting_settings.get('arafah_reminder_enabled', 1) else "❌"
+            
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{monday_thursday_icon} تذكير صيام الاثنين والخميس", 
+                    callback_data=f"toggle_fasting_monday_thursday_{chat_id}"
+                ),
+                types.InlineKeyboardButton(
+                    f"{arafah_icon} تذكير صيام يوم عرفة", 
+                    callback_data=f"toggle_fasting_arafah_{chat_id}"
+                )
+            )
+            
+            # Add time preset button
+            markup.add(
+                types.InlineKeyboardButton("⏰ أوقات شائعة للتذكير", callback_data=f"fasting_time_presets_{chat_id}")
+            )
+            
+            # Add back button with chat_id encoded
+            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        else:
+            markup.add(
+                types.InlineKeyboardButton("⏰ أوقات شائعة للتذكير", callback_data="fasting_time_presets"),
+                types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+            )
+        
+        # Only add support buttons in main settings (not group-specific)
+        if chat_id is None:
+            add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -3159,7 +3756,7 @@ def callback_fasting_reminders_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Fasting reminders settings displayed for user {call.from_user.id}")
+        logger.info(f"Fasting reminders settings displayed for user {call.from_user.id}, chat_id={chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_fasting_reminders_settings: {e}", exc_info=True)
@@ -3384,29 +3981,136 @@ def callback_group_ramadan_settings(call: types.CallbackQuery):
 def callback_toggle_ramadan(call: types.CallbackQuery):
     """
     Toggle Ramadan setting for a group.
+    Supports both in-group format (toggle_ramadan_{key}) and private chat format (toggle_ramadan_{key}_{chat_id})
     """
     try:
-        chat_id = call.message.chat.id
+        # Parse callback data to extract key and possibly chat_id
+        parts = call.data.replace("toggle_ramadan_", "").split("_")
         
-        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
-            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+        # Check if chat_id is in the callback data (private chat with group context)
+        chat_id = None
+        setting_key = None
+        
+        if len(parts) >= 2:
+            # Try to parse last part as chat_id
+            try:
+                chat_id = int(parts[-1])
+                # The key is everything except the last part (chat_id)
+                setting_key = "_".join(parts[:-1])
+            except ValueError:
+                # Last part is not a number, so it's part of the key
+                chat_id = call.message.chat.id
+                setting_key = "_".join(parts)
+        else:
+            # Single part - use as key, chat_id from message
+            chat_id = call.message.chat.id
+            setting_key = parts[0]
+        
+        # Map common keys to database column names
+        key_mapping = {
+            "enabled": "ramadan_enabled",
+            "laylat_alqadr": "laylat_alqadr_enabled",
+            "last_ten": "last_ten_days_enabled",
+            "iftar": "iftar_dua_enabled"
+        }
+        db_key = key_mapping.get(setting_key, setting_key)
+        
+        # Verify user is admin
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
             return
         
-        key = call.data.replace("toggle_ramadan_", "")
+        # Get current settings and toggle
         ramadan_settings = get_ramadan_settings(chat_id)
-        new_value = not ramadan_settings[key]
+        new_value = not ramadan_settings.get(db_key, 1)
         
-        update_ramadan_setting(chat_id, key, new_value)
+        update_ramadan_setting(chat_id, db_key, new_value)
         
-        status_text = "تم التفعيل" if new_value else "تم التعطيل"
-        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        # Prepare updated message with current status
+        ramadan_settings = get_ramadan_settings(chat_id)
+        ramadan_status = "✅ مفعّل" if ramadan_settings.get('ramadan_enabled', 1) else "❌ معطّل"
+        laylat_alqadr_status = "✅ مفعّل" if ramadan_settings.get('laylat_alqadr_enabled', 1) else "❌ معطّل"
+        last_ten_status = "✅ مفعّل" if ramadan_settings.get('last_ten_days_enabled', 1) else "❌ معطّل"
+        iftar_status = "✅ مفعّل" if ramadan_settings.get('iftar_dua_enabled', 1) else "❌ معطّل"
         
-        # Refresh the settings view
-        callback_group_ramadan_settings(call)
+        settings_text = (
+            "🌙 *إعدادات رمضان*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• أدعية رمضان: {ramadan_status}\n"
+            f"• ليلة القدر: {laylat_alqadr_status}\n"
+            f"• العشر الأواخر: {last_ten_status}\n"
+            f"• دعاء الإفطار: {iftar_status}\n\n"
+            "*الأقسام المتاحة:*\n\n"
+            "*1. ليلة القدر:*\n"
+            "أدعية خاصة بليلة القدر المباركة\n"
+            "يتم إرسالها في الليالي الوترية من العشر الأواخر\n\n"
+            "*2. العشر الأواخر من رمضان:*\n"
+            "أذكار وأدعية خاصة بالعشر الأواخر\n"
+            "تبدأ من اليوم 21 من رمضان\n\n"
+            "*3. دعاء الإفطار:*\n"
+            "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        ramadan_icon = "✅" if ramadan_settings.get('ramadan_enabled', 1) else "❌"
+        laylat_alqadr_icon = "✅" if ramadan_settings.get('laylat_alqadr_enabled', 1) else "❌"
+        last_ten_icon = "✅" if ramadan_settings.get('last_ten_days_enabled', 1) else "❌"
+        iftar_icon = "✅" if ramadan_settings.get('iftar_dua_enabled', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{ramadan_icon} أدعية رمضان", 
+                callback_data=f"toggle_ramadan_enabled_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{laylat_alqadr_icon} ليلة القدر", 
+                callback_data=f"toggle_ramadan_laylat_alqadr_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{last_ten_icon} العشر الأواخر", 
+                callback_data=f"toggle_ramadan_last_ten_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{iftar_icon} دعاء الإفطار", 
+                callback_data=f"toggle_ramadan_iftar_{chat_id}"
+            )
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        setting_names = {
+            "enabled": "أدعية رمضان",
+            "laylat_alqadr": "ليلة القدر",
+            "last_ten": "العشر الأواخر",
+            "iftar": "دعاء الإفطار"
+        }
+        setting_name = setting_names.get(setting_key, setting_key)
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {db_key} to {new_value} for chat {chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_ramadan: {e}", exc_info=True)
-        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "group_hajj_eid_settings")
 def callback_group_hajj_eid_settings(call: types.CallbackQuery):
@@ -3464,29 +4168,151 @@ def callback_group_hajj_eid_settings(call: types.CallbackQuery):
 def callback_toggle_hajj_eid(call: types.CallbackQuery):
     """
     Toggle Hajj/Eid setting for a group.
+    Supports both in-group format (toggle_hajj_eid_{key}) and private chat format (toggle_hajj_eid_{key}_{chat_id})
     """
     try:
-        chat_id = call.message.chat.id
+        # Parse callback data to extract key and possibly chat_id
+        parts = call.data.replace("toggle_hajj_eid_", "").split("_")
         
-        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
-            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+        # Check if chat_id is in the callback data (private chat with group context)
+        chat_id = None
+        setting_key = None
+        
+        if len(parts) >= 2:
+            # Try to parse last part as chat_id
+            try:
+                chat_id = int(parts[-1])
+                # The key is everything except the last part (chat_id)
+                setting_key = "_".join(parts[:-1])
+            except ValueError:
+                # Last part is not a number, so it's part of the key
+                chat_id = call.message.chat.id
+                setting_key = "_".join(parts)
+        else:
+            # Single part - use as key, chat_id from message
+            chat_id = call.message.chat.id
+            setting_key = parts[0]
+        
+        # Map common keys to database column names
+        key_mapping = {
+            "arafah": "arafah_day_enabled",
+            "eve": "eid_eve_enabled",
+            "day": "eid_day_enabled",
+            "adha": "eid_adha_enabled",
+            "hajj": "hajj_enabled"
+        }
+        db_key = key_mapping.get(setting_key, setting_key)
+        
+        # Verify user is admin
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
             return
         
-        key = call.data.replace("toggle_hajj_eid_", "")
+        # Get current settings and toggle
         hajj_eid_settings = get_hajj_eid_settings(chat_id)
-        new_value = not hajj_eid_settings[key]
+        new_value = not hajj_eid_settings.get(db_key, 1)
         
-        update_hajj_eid_setting(chat_id, key, new_value)
+        update_hajj_eid_setting(chat_id, db_key, new_value)
         
-        status_text = "تم التفعيل" if new_value else "تم التعطيل"
-        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        # Prepare updated message with current status
+        hajj_settings = get_hajj_eid_settings(chat_id)
+        arafah_status = "✅ مفعّل" if hajj_settings.get('arafah_day_enabled', 1) else "❌ معطّل"
+        eid_eve_status = "✅ مفعّل" if hajj_settings.get('eid_eve_enabled', 1) else "❌ معطّل"
+        eid_day_status = "✅ مفعّل" if hajj_settings.get('eid_day_enabled', 1) else "❌ معطّل"
+        eid_adha_status = "✅ مفعّل" if hajj_settings.get('eid_adha_enabled', 1) else "❌ معطّل"
+        hajj_status = "✅ مفعّل" if hajj_settings.get('hajj_enabled', 1) else "❌ معطّل"
         
-        # Refresh the settings view
-        callback_group_hajj_eid_settings(call)
+        settings_text = (
+            "🕋 *إعدادات الحج والعيد*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• يوم عرفة: {arafah_status}\n"
+            f"• ليلة العيد: {eid_eve_status}\n"
+            f"• يوم العيد: {eid_day_status}\n"
+            f"• عيد الأضحى: {eid_adha_status}\n"
+            f"• أذكار الحج: {hajj_status}\n\n"
+            "*أقسام الحج:*\n\n"
+            "*1. يوم عرفة:*\n"
+            "أدعية خاصة بيوم عرفة المبارك (9 ذو الحجة)\n"
+            "خير الدعاء دعاء يوم عرفة\n\n"
+            "*2. أذكار الحج:*\n"
+            "التلبية وأدعية الحج والعمرة\n\n"
+            "*أقسام العيد:*\n\n"
+            "*1. ليلة العيد:*\n"
+            "أدعية ليلة العيد المباركة\n"
+            "تُرسل في ليلة 29 أو 30 رمضان\n\n"
+            "*2. يوم العيد:*\n"
+            "تكبيرات العيد وأدعية يوم العيد\n"
+            "تُرسل في أول أيام العيد\n\n"
+            "*3. عيد الأضحى:*\n"
+            "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        arafah_icon = "✅" if hajj_settings.get('arafah_day_enabled', 1) else "❌"
+        eid_eve_icon = "✅" if hajj_settings.get('eid_eve_enabled', 1) else "❌"
+        eid_day_icon = "✅" if hajj_settings.get('eid_day_enabled', 1) else "❌"
+        eid_adha_icon = "✅" if hajj_settings.get('eid_adha_enabled', 1) else "❌"
+        hajj_icon = "✅" if hajj_settings.get('hajj_enabled', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{arafah_icon} يوم عرفة", 
+                callback_data=f"toggle_hajj_eid_arafah_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{eid_eve_icon} ليلة العيد", 
+                callback_data=f"toggle_hajj_eid_eve_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{eid_day_icon} يوم العيد", 
+                callback_data=f"toggle_hajj_eid_day_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{eid_adha_icon} عيد الأضحى", 
+                callback_data=f"toggle_hajj_eid_adha_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{hajj_icon} أذكار الحج", 
+                callback_data=f"toggle_hajj_eid_hajj_{chat_id}"
+            )
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        setting_names = {
+            "arafah": "يوم عرفة",
+            "eve": "ليلة العيد",
+            "day": "يوم العيد",
+            "adha": "عيد الأضحى",
+            "hajj": "أذكار الحج"
+        }
+        setting_name = setting_names.get(setting_key, setting_key)
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {db_key} to {new_value} for chat {chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_hajj_eid: {e}", exc_info=True)
-        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "group_fasting_reminders")
 def callback_group_fasting_reminders(call: types.CallbackQuery):
@@ -3542,30 +4368,126 @@ def callback_group_fasting_reminders(call: types.CallbackQuery):
 def callback_toggle_fasting(call: types.CallbackQuery):
     """
     Toggle fasting reminder setting for a group.
+    Supports both in-group format (toggle_fasting_{key}) and private chat format (toggle_fasting_{key}_{chat_id})
     """
     try:
-        chat_id = call.message.chat.id
+        # Parse callback data to extract key and possibly chat_id
+        parts = call.data.replace("toggle_fasting_", "").split("_")
         
-        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
-            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+        # Check if chat_id is in the callback data (private chat with group context)
+        chat_id = None
+        setting_key = None
+        
+        if len(parts) >= 2:
+            # Try to parse last part as chat_id
+            try:
+                chat_id = int(parts[-1])
+                # The key is everything except the last part (chat_id)
+                setting_key = "_".join(parts[:-1])
+            except ValueError:
+                # Last part is not a number, so it's part of the key
+                chat_id = call.message.chat.id
+                setting_key = "_".join(parts)
+        else:
+            # Single part - use as key, chat_id from message
+            chat_id = call.message.chat.id
+            setting_key = parts[0]
+        
+        # Map common keys to database column names
+        key_mapping = {
+            "monday_thursday": "monday_thursday_enabled",
+            "arafah": "arafah_reminder_enabled"
+        }
+        db_key = key_mapping.get(setting_key, setting_key)
+        
+        # Verify user is admin
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
             return
         
-        key = call.data.replace("toggle_fasting_", "")
+        # Get current settings and toggle
         fasting_settings = get_fasting_reminders_settings(chat_id)
-        new_value = not fasting_settings[key]
+        new_value = not fasting_settings.get(db_key, 1)
         
-        update_fasting_reminder_setting(chat_id, key, new_value)
+        update_fasting_reminder_setting(chat_id, db_key, new_value)
         schedule_chat_jobs(chat_id)
         
-        status_text = "تم التفعيل" if new_value else "تم التعطيل"
-        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        # Prepare updated message with current status
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        monday_thursday_status = "✅ مفعّل" if fasting_settings.get('monday_thursday_enabled', 1) else "❌ معطّل"
+        arafah_status = "✅ مفعّل" if fasting_settings.get('arafah_reminder_enabled', 1) else "❌ معطّل"
+        reminder_time = fasting_settings.get('reminder_time', '21:00')
         
-        # Refresh the settings view
-        callback_group_fasting_reminders(call)
+        settings_text = (
+            "🌙 *تذكيرات الصيام*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• صيام الاثنين والخميس: {monday_thursday_status}\n"
+            f"• صيام يوم عرفة: {arafah_status}\n"
+            f"• وقت التذكير: {reminder_time}\n\n"
+            "*تذكير بصيام الاثنين والخميس:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
+            "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
+            "• قابل للتخصيص من خلال الأمر `/setfastingtime`\n\n"
+            "*فضل صيام الاثنين والخميس:*\n"
+            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، "
+            "فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+            "*تذكير بصيام يوم عرفة:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
+            "• يوم عرفة هو التاسع من ذي الحجة\n\n"
+            "*فضل صيام يوم عرفة:*\n"
+            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر "
+            "السنة التي قبله، والسنة التي بعده\"\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        monday_thursday_icon = "✅" if fasting_settings.get('monday_thursday_enabled', 1) else "❌"
+        arafah_icon = "✅" if fasting_settings.get('arafah_reminder_enabled', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{monday_thursday_icon} تذكير صيام الاثنين والخميس", 
+                callback_data=f"toggle_fasting_monday_thursday_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{arafah_icon} تذكير صيام يوم عرفة", 
+                callback_data=f"toggle_fasting_arafah_{chat_id}"
+            )
+        )
+        
+        # Add time preset button
+        markup.add(
+            types.InlineKeyboardButton("⏰ أوقات شائعة للتذكير", callback_data=f"fasting_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        setting_name = "صيام الاثنين والخميس" if setting_key == "monday_thursday" else "صيام يوم عرفة"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {db_key} to {new_value} for chat {chat_id}")
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_fasting: {e}", exc_info=True)
-        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
