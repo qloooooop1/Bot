@@ -1124,10 +1124,11 @@ def log_startup_summary():
     Log comprehensive startup summary with all critical configuration.
     This helps diagnose deployment issues on platforms like Render.
     """
+    is_production = RENDER_HOSTNAME != 'bot-8c0e.onrender.com'
     logger.info("=" * 80)
     logger.info("🚀 BOT STARTUP SUMMARY")
     logger.info("=" * 80)
-    logger.info(f"📍 Environment: {'Production (Render)' if RENDER_HOSTNAME != 'bot-8c0e.onrender.com' else 'Default'}")
+    logger.info(f"📍 Environment: {'Production (Render)' if is_production else 'Default/Development'}")
     logger.info(f"🔌 PORT: {PORT} (Source: {'Environment Variable' if os.environ.get('PORT') else 'Default'})")
     logger.info(f"🌐 Webhook URL: {WEBHOOK_URL}")
     logger.info(f"🏠 Render Hostname: {RENDER_HOSTNAME}")

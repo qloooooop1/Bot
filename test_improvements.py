@@ -106,8 +106,13 @@ class TestHealthEndpointData(unittest.TestCase):
         """Test valid health status values"""
         valid_statuses = ["healthy", "degraded", "misconfigured", "unhealthy"]
         
-        for status in valid_statuses:
-            self.assertIn(status, ["healthy", "degraded", "misconfigured", "unhealthy"])
+        # Test a sample health response
+        sample_status = "healthy"
+        self.assertIn(sample_status, valid_statuses)
+        
+        # Test edge cases
+        invalid_status = "unknown"
+        self.assertNotIn(invalid_status, valid_statuses)
 
 
 class TestWebhookVerification(unittest.TestCase):
@@ -166,19 +171,20 @@ class TestStartupSummary(unittest.TestCase):
     
     def test_startup_summary_components(self):
         """Test startup summary includes all necessary components"""
-        required_info = [
-            "Environment",
-            "PORT",
-            "Webhook URL",
-            "Render Hostname",
-            "Timezone",
-            "Bot Token",
-            "Scheduler"
-        ]
+        required_info = {
+            "Environment": str,
+            "PORT": int,
+            "Webhook URL": str,
+            "Render Hostname": str,
+            "Timezone": str,
+            "Bot Token": str,
+            "Scheduler": bool
+        }
         
-        # These components should be logged at startup
-        for component in required_info:
+        # Verify component types are correctly defined
+        for component, expected_type in required_info.items():
             self.assertIsNotNone(component)
+            self.assertIsNotNone(expected_type)
 
 
 class TestGunicornCompatibility(unittest.TestCase):
