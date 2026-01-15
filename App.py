@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import time
 from datetime import datetime
 import pytz
 import random
@@ -1028,7 +1029,6 @@ def setup_webhook():
             logger.info("Previous webhook removed successfully")
             
             # Small delay to ensure Telegram processes the removal
-            import time
             time.sleep(1)
             
             # Set new webhook with comprehensive configuration
@@ -1058,7 +1058,6 @@ def setup_webhook():
             
         # Exponential backoff before retry
         if attempt < max_retries - 1:
-            import time
             delay = base_delay * (2 ** attempt)  # Exponential backoff: 2, 4, 8, 16 seconds
             logger.info(f"Retrying in {delay} seconds...")
             time.sleep(delay)
@@ -1085,7 +1084,6 @@ def verify_webhook():
         elif info.last_error_message:
             logger.warning(f"Webhook has errors: {info.last_error_message}")
             # Only reconfigure if error is recent (within last hour)
-            import time
             if info.last_error_date and (time.time() - info.last_error_date < 3600):
                 logger.info("Recent webhook error detected, reconfiguring...")
                 setup_webhook()
