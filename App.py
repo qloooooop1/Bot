@@ -44,16 +44,12 @@ bot = telebot.TeleBot(BOT_TOKEN)
 TIMEZONE = pytz.timezone('Asia/Riyadh')
 
 # قاعدة البيانات مع قفل للسلامة في البيئات متعددة الخيوط
+# Database with lock for thread safety in multi-threaded environments
+# Note: APScheduler ensures scheduled jobs don't run simultaneously,
+# but we use locks for user-triggered operations that might overlap
 conn = sqlite3.connect('adhkar_bot.db', check_same_thread=False)
 cursor = conn.cursor()
 db_lock = threading.Lock()
-
-def with_db_lock(func):
-    """Decorator to ensure database operations are thread-safe"""
-    def wrapper(*args, **kwargs):
-        with db_lock:
-            return func(*args, **kwargs)
-    return wrapper
 
 # إنشاء الجداول
 def init_database():
