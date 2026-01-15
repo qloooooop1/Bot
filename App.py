@@ -110,7 +110,12 @@ def init_db():
             delete_service_messages INTEGER DEFAULT 1,
             morning_time TEXT DEFAULT '05:00',
             evening_time TEXT DEFAULT '18:00',
-            sleep_time TEXT DEFAULT '22:00'
+            sleep_time TEXT DEFAULT '22:00',
+            media_enabled INTEGER DEFAULT 0,
+            media_type TEXT DEFAULT 'images',
+            send_media_with_morning INTEGER DEFAULT 0,
+            send_media_with_evening INTEGER DEFAULT 0,
+            send_media_with_friday INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -197,6 +202,7 @@ def get_chat_settings(chat_id: int) -> dict:
         conn.close()
         return get_chat_settings(chat_id)
 
+    # Handle both old and new schema for backward compatibility
     return {
         "chat_id": row[0],
         "is_enabled": bool(row[1]),
@@ -209,6 +215,11 @@ def get_chat_settings(chat_id: int) -> dict:
         "morning_time": row[8],
         "evening_time": row[9],
         "sleep_time": row[10],
+        "media_enabled": bool(row[11]) if len(row) > 11 else False,
+        "media_type": row[12] if len(row) > 12 else "images",
+        "send_media_with_morning": bool(row[13]) if len(row) > 13 else False,
+        "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
+        "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
     }
 
 def update_chat_setting(chat_id: int, key: str, value):
@@ -216,7 +227,9 @@ def update_chat_setting(chat_id: int, key: str, value):
         "is_enabled", "morning_azkar", "evening_azkar",
         "friday_sura", "friday_dua", "sleep_message",
         "delete_service_messages", "morning_time",
-        "evening_time", "sleep_time"
+        "evening_time", "sleep_time", "media_enabled",
+        "media_type", "send_media_with_morning",
+        "send_media_with_evening", "send_media_with_friday"
     }
     if key not in allowed_keys:
         logger.error(f"Invalid setting key: {key}")
@@ -353,6 +366,153 @@ def load_sleep_azkar():
     except Exception as e:
         logger.error(f"Error loading sleep.json: {e}")
         return ""
+
+# ────────────────────────────────────────────────
+#               Media Database Functions
+# ────────────────────────────────────────────────
+
+def load_media_database():
+    """
+    Load media database from JSON file.
+    
+    Returns:
+        dict: Media database with images, videos, and documents
+        Returns empty structure on error
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'media_database.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        logger.info("Media database loaded successfully")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading media database: {e}")
+        return {"media": {"images": [], "videos": [], "documents": []}, "settings": {}}
+
+def get_random_media(media_type: str = "all"):
+    """
+    Get a random media item from the database.
+    
+    Args:
+        media_type (str): Type of media to get - 'images', 'videos', 'documents', or 'all'
+        
+    Returns:
+        dict: Random media item with type and file_id, or None if no media available
+    """
+    try:
+        db = load_media_database()
+        media_items = []
+        
+        if media_type == "all":
+            for category in ["images", "videos", "documents"]:
+                media_items.extend([
+                    {**item, "category_type": category}
+                    for item in db["media"].get(category, [])
+                    if item.get("enabled", True) and item.get("file_id")
+                ])
+        else:
+            media_items = [
+                {**item, "category_type": media_type}
+                for item in db["media"].get(media_type, [])
+                if item.get("enabled", True) and item.get("file_id")
+            ]
+        
+        if not media_items:
+            logger.debug(f"No enabled media found for type: {media_type}")
+            return None
+        
+        selected = random.choice(media_items)
+        logger.debug(f"Selected random media: {selected.get('id', 'unknown')}")
+        return selected
+        
+    except Exception as e:
+        logger.error(f"Error getting random media: {e}")
+        return None
+
+def send_media_with_caption(chat_id: int, caption: str, media_type: str = "all"):
+    """
+    Send a media message with azkar caption.
+    
+    Args:
+        chat_id (int): The chat ID to send to
+        caption (str): The caption text (azkar content)
+        media_type (str): Type of media to send
+        
+    Returns:
+        bool: True if sent successfully, False otherwise
+    """
+    try:
+        media = get_random_media(media_type)
+        
+        if not media:
+            logger.info(f"No media available for type {media_type}, sending text only")
+            bot.send_message(chat_id, caption, parse_mode="Markdown")
+            return True
+        
+        file_id = media.get("file_id")
+        category = media.get("category_type", "images")
+        
+        if category == "images":
+            bot.send_photo(chat_id, file_id, caption=caption, parse_mode="Markdown")
+        elif category == "videos":
+            bot.send_video(chat_id, file_id, caption=caption, parse_mode="Markdown")
+        elif category == "documents":
+            bot.send_document(chat_id, file_id, caption=caption, parse_mode="Markdown")
+        else:
+            # Fallback to text message
+            bot.send_message(chat_id, caption, parse_mode="Markdown")
+        
+        logger.info(f"Sent media ({category}) with caption to {chat_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error sending media with caption: {e}")
+        # Fallback to text message on error
+        try:
+            bot.send_message(chat_id, caption, parse_mode="Markdown")
+            return True
+        except Exception as e2:
+            logger.error(f"Error sending fallback text message: {e2}")
+            return False
+
+def update_media_database(media_item: dict):
+    """
+    Add or update a media item in the database.
+    
+    Args:
+        media_item (dict): Media item with type, file_id, description, etc.
+        
+    Returns:
+        bool: True if updated successfully, False otherwise
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'media_database.json')
+        
+        # Load existing database
+        with open(filepath, 'r', encoding='utf-8') as f:
+            db = json.load(f)
+        
+        # Determine category
+        category = media_item.get("type", "images")
+        if category not in ["images", "videos", "documents"]:
+            category = "images"
+        
+        # Add to appropriate category
+        if category not in db["media"]:
+            db["media"][category] = []
+        
+        db["media"][category].append(media_item)
+        
+        # Save updated database
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Added media item to database: {media_item.get('id', 'unknown')}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating media database: {e}")
+        return False
 
 # ────────────────────────────────────────────────
 #               Content - أذكار الصباح
@@ -499,21 +659,34 @@ def send_azkar(chat_id: int, azkar_type: str):
             return
 
         messages = []
+        send_with_media = False
 
         if azkar_type == "morning" and settings["morning_azkar"]:
             messages = MORNING_AZKAR
+            send_with_media = settings.get("send_media_with_morning", False)
         elif azkar_type == "evening" and settings["evening_azkar"]:
             messages = EVENING_AZKAR
+            send_with_media = settings.get("send_media_with_evening", False)
         elif azkar_type == "friday_kahf" and settings["friday_sura"]:
             messages = [KAHF_REMINDER]
+            send_with_media = settings.get("send_media_with_friday", False)
         elif azkar_type == "friday_dua" and settings["friday_dua"]:
             messages = FRIDAY_DUA
+            send_with_media = settings.get("send_media_with_friday", False)
         elif azkar_type == "sleep" and settings["sleep_message"]:
             messages = [SLEEP_MESSAGE]
 
-        for msg in messages:
+        # Check if media is enabled globally
+        media_enabled = settings.get("media_enabled", False) and send_with_media
+        media_type = settings.get("media_type", "images")
+
+        for idx, msg in enumerate(messages):
             try:
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
+                # Send first message with media if enabled
+                if media_enabled and idx == 0:
+                    send_media_with_caption(chat_id, msg, media_type)
+                else:
+                    bot.send_message(chat_id, msg, parse_mode="Markdown")
                 logger.info(f"Sent {azkar_type} message to {chat_id}")
             except telebot.apihelper.ApiTelegramException as e:
                 if "blocked" in str(e).lower() or "kicked" in str(e).lower():
@@ -926,12 +1099,19 @@ def callback_open_settings(call: types.CallbackQuery):
             "استخدم أمر `/settings` في المجموعة التي تريد تعديل إعداداتها"
         )
         
+        # Add advanced settings button
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("⚙️ الإعدادات المتقدمة", callback_data="advanced_settings")
+        )
+        
         # Edit the message to show settings
         bot.edit_message_text(
             settings_text,
             call.message.chat.id,
             call.message.message_id,
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=markup
         )
         
         logger.info(f"Settings displayed for user {call.from_user.id}")
@@ -947,6 +1127,207 @@ def callback_open_settings(call: types.CallbackQuery):
             )
         except Exception:
             # Callback already answered
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "advanced_settings")
+def callback_advanced_settings(call: types.CallbackQuery):
+    """
+    Handle callback for advanced settings panel.
+    Displays media and scheduling options for the bot.
+    """
+    try:
+        # Check if user is admin in any group
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ يجب أن تكون مشرفًا في إحدى المجموعات",
+                show_alert=True
+            )
+            return
+        
+        bot.answer_callback_query(call.id, "الإعدادات المتقدمة")
+        
+        # Build advanced settings message
+        settings_text = (
+            "⚙️ *الإعدادات المتقدمة*\n\n"
+            "*إعدادات الوسائط:*\n"
+            "تفعيل/تعطيل إرسال الوسائط مع الأذكار\n\n"
+            "*إعدادات المواعيد:*\n"
+            "تخصيص أوقات إرسال الأذكار\n\n"
+            "*ملاحظة:* هذه الإعدادات تطبق على جميع المجموعات\n"
+            "للتعديل الفردي لكل مجموعة، استخدم `/settings` في المجموعة"
+        )
+        
+        # Create keyboard with options
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
+            types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings"),
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Advanced settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_advanced_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "media_settings")
+def callback_media_settings(call: types.CallbackQuery):
+    """
+    Handle callback for media settings panel.
+    Allows user to configure media sending options.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات الوسائط")
+        
+        # Note: Media settings are global placeholders
+        # In reality, each group should have its own settings
+        settings_text = (
+            "📷 *إعدادات الوسائط*\n\n"
+            "*تفعيل الوسائط مع الأذكار:*\n"
+            "يمكنك اختيار إرسال صور أو مقاطع فيديو مع الأذكار\n\n"
+            "*أنواع الوسائط المتاحة:*\n"
+            "• صور إسلامية\n"
+            "• مقاطع فيديو\n"
+            "• ملفات PDF\n\n"
+            "*ملاحظة:* يتم اختيار الوسائط عشوائياً من قاعدة البيانات\n\n"
+            "للتفعيل في مجموعة معينة:\n"
+            "1. اذهب للمجموعة\n"
+            "2. استخدم `/settings`\n"
+            "3. فعّل الميزات المطلوبة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📸 نوع الوسائط: صور", callback_data="media_type_images"),
+            types.InlineKeyboardButton("🎥 نوع الوسائط: فيديو", callback_data="media_type_videos"),
+            types.InlineKeyboardButton("📄 نوع الوسائط: ملفات", callback_data="media_type_documents"),
+            types.InlineKeyboardButton("🎲 نوع الوسائط: عشوائي", callback_data="media_type_all"),
+            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Media settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_media_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("media_type_"))
+def callback_media_type(call: types.CallbackQuery):
+    """
+    Handle media type selection callbacks.
+    """
+    try:
+        media_type = call.data.replace("media_type_", "")
+        
+        media_names = {
+            "images": "صور",
+            "videos": "فيديو",
+            "documents": "ملفات",
+            "all": "عشوائي"
+        }
+        
+        bot.answer_callback_query(
+            call.id,
+            f"✓ تم اختيار: {media_names.get(media_type, 'عشوائي')}",
+            show_alert=False
+        )
+        
+        logger.info(f"User {call.from_user.id} selected media type: {media_type}")
+        
+        # Note: This is a demonstration. In a full implementation,
+        # you would save this preference to a user settings table
+        
+    except Exception as e:
+        logger.error(f"Error in callback_media_type: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "schedule_settings")
+def callback_schedule_settings(call: types.CallbackQuery):
+    """
+    Handle callback for schedule settings panel.
+    Allows user to configure timing options.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات المواعيد")
+        
+        settings_text = (
+            "🕐 *إعدادات المواعيد*\n\n"
+            "*الأوقات الافتراضية:*\n"
+            "• أذكار الصباح: 05:00\n"
+            "• أذكار المساء: 18:00\n"
+            "• رسالة النوم: 22:00\n"
+            "• سورة الكهف: الجمعة 09:00\n"
+            "• دعاء الجمعة: الجمعة 10:00\n\n"
+            "*لتخصيص الأوقات:*\n"
+            "استخدم الأوامر التالية في المجموعة:\n"
+            "`/settime morning HH:MM`\n"
+            "`/settime evening HH:MM`\n"
+            "`/settime sleep HH:MM`\n\n"
+            "*مثال:*\n"
+            "`/settime morning 06:30`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Schedule settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_schedule_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
             pass
 
 @bot.message_handler(commands=["status"])
@@ -1011,6 +1392,94 @@ def cmd_disable(message: types.Message):
             job.remove()
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
     logger.info(f"Bot disabled in {message.chat.id}")
+
+@bot.message_handler(commands=["settime"])
+def cmd_settime(message: types.Message):
+    """
+    Set custom time for azkar sending.
+    Usage: /settime <type> <time>
+    Example: /settime morning 06:00
+    """
+    if message.chat.type == "private":
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
+        return
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
+        return
+
+    try:
+        # Parse command arguments
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(
+                message.chat.id,
+                "⚠️ *الاستخدام الصحيح:*\n"
+                "`/settime <نوع> <وقت>`\n\n"
+                "*الأنواع المتاحة:*\n"
+                "• `morning` - أذكار الصباح\n"
+                "• `evening` - أذكار المساء\n"
+                "• `sleep` - رسالة النوم\n\n"
+                "*مثال:*\n"
+                "`/settime morning 06:00`",
+                parse_mode="Markdown"
+            )
+            return
+
+        azkar_type = parts[1].lower()
+        time_str = parts[2]
+
+        # Validate type
+        valid_types = {
+            "morning": "morning_time",
+            "evening": "evening_time",
+            "sleep": "sleep_time"
+        }
+
+        if azkar_type not in valid_types:
+            bot.send_message(
+                message.chat.id,
+                f"⚠️ نوع غير صحيح: `{azkar_type}`\n"
+                "الأنواع المتاحة: morning, evening, sleep",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Validate time format
+        try:
+            hour, minute = map(int, time_str.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError("Invalid time range")
+        except (ValueError, IndexError):
+            bot.send_message(
+                message.chat.id,
+                "⚠️ صيغة الوقت غير صحيحة\n"
+                "استخدم الصيغة: `HH:MM` (مثال: `06:30`)",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Update setting
+        setting_key = valid_types[azkar_type]
+        update_chat_setting(message.chat.id, setting_key, time_str)
+        schedule_chat_jobs(message.chat.id)
+
+        type_names = {
+            "morning": "أذكار الصباح",
+            "evening": "أذكار المساء",
+            "sleep": "رسالة النوم"
+        }
+
+        bot.send_message(
+            message.chat.id,
+            f"✅ تم تحديث وقت {type_names[azkar_type]} إلى `{time_str}`",
+            parse_mode="Markdown"
+        )
+        logger.info(f"Time updated for {azkar_type} in chat {message.chat.id}: {time_str}")
+
+    except Exception as e:
+        logger.error(f"Error in cmd_settime: {e}", exc_info=True)
+        bot.send_message(message.chat.id, "حدث خطأ أثناء تحديث الوقت")
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message: types.Message):

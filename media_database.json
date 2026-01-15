@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "description": "قاعدة بيانات الوسائط المستخدمة مع الأذكار",
+  "media": {
+    "images": [
+      {
+        "id": "img_001",
+        "type": "photo",
+        "file_id": "",
+        "description": "خلفية إسلامية - مسجد",
+        "tags": ["مسجد", "إسلامي", "خلفية"],
+        "category": "islamic_art",
+        "enabled": true
+      },
+      {
+        "id": "img_002",
+        "type": "photo",
+        "file_id": "",
+        "description": "خلفية إسلامية - قرآن",
+        "tags": ["قرآن", "إسلامي", "خلفية"],
+        "category": "islamic_art",
+        "enabled": true
+      },
+      {
+        "id": "img_003",
+        "type": "photo",
+        "file_id": "",
+        "description": "خلفية إسلامية - كعبة",
+        "tags": ["كعبة", "مكة", "إسلامي"],
+        "category": "holy_places",
+        "enabled": true
+      }
+    ],
+    "videos": [
+      {
+        "id": "vid_001",
+        "type": "video",
+        "file_id": "",
+        "description": "مقطع قرآن كريم",
+        "tags": ["قرآن", "تلاوة"],
+        "category": "quran",
+        "enabled": true
+      },
+      {
+        "id": "vid_002",
+        "type": "video",
+        "file_id": "",
+        "description": "مقطع أذكار",
+        "tags": ["أذكار", "ذكر"],
+        "category": "azkar",
+        "enabled": true
+      }
+    ],
+    "documents": [
+      {
+        "id": "doc_001",
+        "type": "document",
+        "file_id": "",
+        "description": "ملف PDF - أذكار الصباح والمساء",
+        "tags": ["أذكار", "صباح", "مساء", "pdf"],
+        "category": "azkar",
+        "enabled": true
+      }
+    ]
+  },
+  "settings": {
+    "default_media_type": "images",
+    "random_selection": true,
+    "media_with_azkar": true
+  }
+}
