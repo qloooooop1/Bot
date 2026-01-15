@@ -1,11 +1,12 @@
 {
   "version": 1,
   "description": "قاعدة بيانات الوسائط المستخدمة مع الأذكار",
+  "note": "ملاحظة: يجب ملء file_id بمعرف الملف الفعلي من تيليجرام لتفعيل إرسال الوسائط. الحقول الفارغة للأمثلة فقط.",
   "media": {
     "images": [
       {
         "id": "img_001",
-        "type": "photo",
+        "type": "images",
         "file_id": "",
         "description": "خلفية إسلامية - مسجد",
         "tags": ["مسجد", "إسلامي", "خلفية"],
@@ -14,7 +15,7 @@
       },
       {
         "id": "img_002",
-        "type": "photo",
+        "type": "images",
         "file_id": "",
         "description": "خلفية إسلامية - قرآن",
         "tags": ["قرآن", "إسلامي", "خلفية"],
@@ -23,7 +24,7 @@
       },
       {
         "id": "img_003",
-        "type": "photo",
+        "type": "images",
         "file_id": "",
         "description": "خلفية إسلامية - كعبة",
         "tags": ["كعبة", "مكة", "إسلامي"],
@@ -34,7 +35,7 @@
     "videos": [
       {
         "id": "vid_001",
-        "type": "video",
+        "type": "videos",
         "file_id": "",
         "description": "مقطع قرآن كريم",
         "tags": ["قرآن", "تلاوة"],
@@ -43,7 +44,7 @@
       },
       {
         "id": "vid_002",
-        "type": "video",
+        "type": "videos",
         "file_id": "",
         "description": "مقطع أذكار",
         "tags": ["أذكار", "ذكر"],
@@ -54,7 +55,7 @@
     "documents": [
       {
         "id": "doc_001",
-        "type": "document",
+        "type": "documents",
         "file_id": "",
         "description": "ملف PDF - أذكار الصباح والمساء",
         "tags": ["أذكار", "صباح", "مساء", "pdf"],
