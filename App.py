@@ -187,6 +187,119 @@ def init_db():
 
 init_db()
 
+def init_postgres_db():
+    """Initialize PostgreSQL database tables if DATABASE_URL is configured."""
+    if not (DATABASE_URL and POSTGRES_AVAILABLE):
+        return
+    
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as c:
+                # Main chat settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS chat_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        is_enabled INTEGER DEFAULT 1,
+                        morning_azkar INTEGER DEFAULT 1,
+                        evening_azkar INTEGER DEFAULT 1,
+                        friday_sura INTEGER DEFAULT 1,
+                        friday_dua INTEGER DEFAULT 1,
+                        sleep_message INTEGER DEFAULT 1,
+                        delete_service_messages INTEGER DEFAULT 1,
+                        morning_time TEXT DEFAULT '05:00',
+                        evening_time TEXT DEFAULT '18:00',
+                        sleep_time TEXT DEFAULT '22:00',
+                        media_enabled INTEGER DEFAULT 0,
+                        media_type TEXT DEFAULT 'images',
+                        send_media_with_morning INTEGER DEFAULT 0,
+                        send_media_with_evening INTEGER DEFAULT 0,
+                        send_media_with_friday INTEGER DEFAULT 0
+                    )
+                ''')
+                
+                # Diverse azkar settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS diverse_azkar_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        enabled INTEGER DEFAULT 0,
+                        interval_minutes INTEGER DEFAULT 60,
+                        media_type TEXT DEFAULT 'text',
+                        last_sent_timestamp BIGINT DEFAULT 0,
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Ramadan settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS ramadan_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        ramadan_enabled INTEGER DEFAULT 1,
+                        laylat_alqadr_enabled INTEGER DEFAULT 1,
+                        last_ten_days_enabled INTEGER DEFAULT 1,
+                        iftar_dua_enabled INTEGER DEFAULT 1,
+                        media_type TEXT DEFAULT 'images',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Hajj and Eid settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS hajj_eid_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        arafah_day_enabled INTEGER DEFAULT 1,
+                        eid_eve_enabled INTEGER DEFAULT 1,
+                        eid_day_enabled INTEGER DEFAULT 1,
+                        eid_adha_enabled INTEGER DEFAULT 1,
+                        hajj_enabled INTEGER DEFAULT 1,
+                        media_type TEXT DEFAULT 'images',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Fasting reminders settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS fasting_reminders (
+                        chat_id BIGINT PRIMARY KEY,
+                        monday_thursday_enabled INTEGER DEFAULT 1,
+                        arafah_reminder_enabled INTEGER DEFAULT 1,
+                        reminder_time TEXT DEFAULT '21:00',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                conn.commit()
+                logger.info("✓ PostgreSQL database initialized with all tables")
+    except Exception as e:
+        logger.error(f"Failed to initialize PostgreSQL database: {e}", exc_info=True)
+        logger.info("Continuing with SQLite fallback")
+
+# Initialize PostgreSQL if available
+init_postgres_db()
+
+# ────────────────────────────────────────────────
+#               Database Helper Functions
+# ────────────────────────────────────────────────
+
+def get_db_connection():
+    """
+    Get database connection - PostgreSQL if available, otherwise SQLite.
+    
+    Returns:
+        tuple: (connection, cursor, is_postgres)
+    """
+    if DATABASE_URL and POSTGRES_AVAILABLE:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            return conn, cursor, True
+        except Exception as e:
+            logger.warning(f"PostgreSQL connection failed, using SQLite: {e}")
+    
+    # Fallback to SQLite
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    return conn, cursor, False
+
 # ────────────────────────────────────────────────
 #               Helper Functions
 # ────────────────────────────────────────────────
@@ -251,41 +364,49 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
         return False
 
 def get_chat_settings(chat_id: int) -> dict:
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
-    conn.close()
-
-    if row is None:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO chat_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    """Get chat settings from database (PostgreSQL preferred, SQLite fallback)."""
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        # Use appropriate placeholder for database type
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM chat_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO chat_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_chat_settings(chat_id)
+        
         conn.close()
-        return get_chat_settings(chat_id)
-
-    # Handle both old and new schema for backward compatibility
-    return {
-        "chat_id": row[0],
-        "is_enabled": bool(row[1]),
-        "morning_azkar": bool(row[2]),
-        "evening_azkar": bool(row[3]),
-        "friday_sura": bool(row[4]),
-        "friday_dua": bool(row[5]),
-        "sleep_message": bool(row[6]),
-        "delete_service_messages": bool(row[7]),
-        "morning_time": row[8],
-        "evening_time": row[9],
-        "sleep_time": row[10],
-        "media_enabled": bool(row[11]) if len(row) > 11 else False,
-        "media_type": row[12] if len(row) > 12 else "images",
-        "send_media_with_morning": bool(row[13]) if len(row) > 13 else False,
-        "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
-        "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
-    }
+        
+        # Handle both old and new schema for backward compatibility
+        return {
+            "chat_id": row[0],
+            "is_enabled": bool(row[1]),
+            "morning_azkar": bool(row[2]),
+            "evening_azkar": bool(row[3]),
+            "friday_sura": bool(row[4]),
+            "friday_dua": bool(row[5]),
+            "sleep_message": bool(row[6]),
+            "delete_service_messages": bool(row[7]),
+            "morning_time": row[8],
+            "evening_time": row[9],
+            "sleep_time": row[10],
+            "media_enabled": bool(row[11]) if len(row) > 11 else False,
+            "media_type": row[12] if len(row) > 12 else "images",
+            "send_media_with_morning": bool(row[13]) if len(row) > 13 else False,
+            "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
+            "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
+        }
+    except Exception as e:
+        logger.error(f"Error getting chat settings: {e}", exc_info=True)
+        conn.close()
+        raise
 
 def update_chat_setting(chat_id: int, key: str, value):
+    """Update chat setting in database (PostgreSQL preferred, SQLite fallback)."""
     allowed_keys = {
         "is_enabled", "morning_azkar", "evening_azkar",
         "friday_sura", "friday_dua", "sleep_message",
@@ -298,21 +419,27 @@ def update_chat_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid setting key: {key}")
         return
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Convert value to appropriate type based on key
-    if key in ["morning_time", "evening_time", "sleep_time", "media_type"]:
-        # String values - no conversion needed
-        final_value = value
-    else:
-        # Boolean/integer values - convert to int
-        final_value = int(value)
-    
-    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated {key} = {value} for chat {chat_id}")
+    try:
+        # Convert value to appropriate type based on key
+        if key in ["morning_time", "evening_time", "sleep_time", "media_type"]:
+            # String values - no conversion needed
+            final_value = value
+        else:
+            # Boolean/integer values - convert to int
+            final_value = int(value)
+        
+        # Use appropriate placeholder for database type
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"UPDATE chat_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Updated {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating chat setting: {e}", exc_info=True)
+        conn.close()
+        raise
 
 # ────────────────────────────────────────────────
 #               Diverse Azkar Settings Functions
@@ -320,25 +447,31 @@ def update_chat_setting(chat_id: int, key: str, value):
 
 def get_diverse_azkar_settings(chat_id: int) -> dict:
     """Get diverse azkar settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_diverse_azkar_settings(chat_id)
+        
         conn.close()
-        return get_diverse_azkar_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "enabled": bool(row[1]),
-        "interval_minutes": row[2],
-        "media_type": row[3],
-        "last_sent_timestamp": row[4]
-    }
+        return {
+            "chat_id": row[0],
+            "enabled": bool(row[1]),
+            "interval_minutes": row[2],
+            "media_type": row[3],
+            "last_sent_timestamp": row[4]
+        }
+    except Exception as e:
+        logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
+        conn.close()
+        raise
 
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
