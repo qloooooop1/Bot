@@ -590,80 +590,83 @@ def delete_service_messages(message: types.Message):
         # Fail silently as service message deletion is non-critical
         logger.debug(f"Could not delete service message in {chat_id}: {e}")
 
+def cmd_settings_markup():
+    """
+    Generate the settings inline keyboard markup.
+    
+    Returns:
+        types.InlineKeyboardMarkup: Keyboard with settings buttons
+    """
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="settings_panel")
+    )
+    return markup
+
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
     Handle /start command in both private chats and groups.
-    Provides clear information and interactive buttons.
+    Updated to show different interfaces based on chat type and admin status.
     """
     try:
-        logger.info(f"Start command received from {message.from_user.id}")
+        logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
         
+        # Cache bot info to avoid redundant API calls
+        bot_info = bot.get_me()
+        
+        # إذا كانت الرسالة واردة داخل محادثة خاصة
         if message.chat.type == "private":
-            # Create keyboard with three buttons for private chat
+            bot_username = bot_info.username or "نور الذكر"
+            description = "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
             markup = types.InlineKeyboardMarkup(row_width=1)
-            
-            # Get bot username safely
-            try:
-                bot_username = bot.get_me().username
-            except telebot.apihelper.ApiException as e:
-                logger.error(f"Failed to get bot username from Telegram: {e}")
-                bot_username = "NourAdhkarBot"  # Fallback
-            except Exception as e:
-                # Catch any other unexpected errors
-                logger.error(f"Unexpected error getting bot username: {e}")
-                bot_username = "NourAdhkarBot"  # Fallback
-            
             markup.add(
-                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
+                types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
                 types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
-                types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعة", url=f"https://t.me/{bot_username}?startgroup=true")
+                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
             )
-            
-            welcome_text = (
-                "🌟 *مرحباً بك في بوت نور الذكر* 🌟\n\n"
-                "📿 *أنا بوت يقوم بإرسال:*\n"
-                "• أذكار الصباح والمساء\n"
-                "• سورة الكهف يوم الجمعة\n"
-                "• أدعية الجمعة\n"
-                "• رسائل النوم\n\n"
-                "✨ *طريقة الاستخدام:*\n"
-                "1. أضفني إلى مجموعتك\n"
-                "2. اجعلني مشرفاً\n"
-                "3. سأبدأ العمل تلقائياً!\n\n"
-                "⚙️ استخدم الأزرار أدناه للتواصل والإضافة\n\n"
-                "🚀 *البوت شغال الآن!*"
-            )
-            
-            bot.reply_to(
-                message,
-                welcome_text,
+            bot.send_message(
+                message.chat.id,
+                f"مرحبًا بك في {bot_username} ✨\n{description}",
                 reply_markup=markup,
                 parse_mode="Markdown"
             )
             logger.info(f"/start received in private chat from {message.from_user.id}")
+        
+        # إذا كانت الرسالة واردة داخل مجموعة أو مجموعة سوبر
         else:
-            # Group chat response with buttons
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
-                types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar")
-            )
-            
-            group_text = (
-                "✅ *تم التفعيل بنجاح!*\n\n"
-                "📿 البوت جاهز لإرسال الأذكار اليومية\n"
-                "⚙️ استخدم /settings لتخصيص الإعدادات (للمشرفين فقط)\n\n"
-                "🚀 *البوت شغال الآن!*"
-            )
-            
-            bot.reply_to(
-                message,
-                group_text,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-            logger.info(f"/start received in group {message.chat.id}")
+            bot_status = bot.get_chat_member(chat_id=message.chat.id, user_id=bot_info.id).status
+            if bot_status in ["administrator", "creator"]:
+                bot.send_message(
+                    message.chat.id,
+                    "تم تفعيل البوت في المجموعة! اذهب إلى الخاص لتعديل الإعدادات. ✅",
+                    parse_mode="Markdown"
+                )
+                # أرسل لوحة الإعدادات إلى الخاص بالشخص الذي أرسل /start
+                try:
+                    bot.send_message(
+                        message.from_user.id,
+                        "هنا لوحة الإعدادات:",
+                        reply_markup=cmd_settings_markup(),
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"Settings panel sent to user {message.from_user.id}")
+                except Exception as e:
+                    # If unable to send to private chat (user hasn't started bot)
+                    logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
+                    bot.send_message(
+                        message.chat.id,
+                        "⚠️ يرجى بدء محادثة خاصة مع البوت أولاً لاستلام لوحة الإعدادات.",
+                        parse_mode="Markdown"
+                    )
+                logger.info(f"/start received in group {message.chat.id} (bot is admin)")
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل 🔑",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"/start received in group {message.chat.id} (bot is not admin)")
     except Exception as e:
         logger.error(f"Error in cmd_start: {e}", exc_info=True)
         try:
@@ -756,6 +759,22 @@ def callback_toggle(call: types.CallbackQuery):
     )
 
     bot.answer_callback_query(call.id, "تم التحديث")
+
+@bot.callback_query_handler(func=lambda call: call.data == "settings_panel")
+def callback_settings_panel(call: types.CallbackQuery):
+    """
+    Handle callback for settings panel button.
+    This redirects users to use /settings command in their group.
+    """
+    try:
+        bot.answer_callback_query(
+            call.id,
+            "يرجى استخدام أمر /settings في المجموعة لتعديل الإعدادات",
+            show_alert=True
+        )
+        logger.info(f"Settings panel callback from user {call.from_user.id}")
+    except Exception as e:
+        logger.error(f"Error in callback_settings_panel: {e}", exc_info=True)
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
