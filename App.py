@@ -17,12 +17,18 @@ from apscheduler.triggers.cron import CronTrigger
 #               Logging Setup
 # ────────────────────────────────────────────────
 
+# Configure logging with proper formatting
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy logs from libraries
+logging.getLogger('apscheduler').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # ────────────────────────────────────────────────
 #               Configuration
@@ -683,10 +689,29 @@ def cmd_disable(message: types.Message):
 
 @app.route("/")
 def home():
-    return "نور الذكر – البوت يعمل ✓"
+    """Health check endpoint for monitoring services"""
+    return "نور الذكر – البوت يعمل ✓", 200
+
+@app.route("/health")
+def health():
+    """Detailed health check endpoint"""
+    try:
+        # Check webhook status
+        info = bot.get_webhook_info()
+        status = {
+            "status": "healthy",
+            "webhook_url": info.url,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message or "None"
+        }
+        return status, 200
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "unhealthy", "error": str(e)}, 500
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
+    """Handle incoming webhook updates from Telegram"""
     if request.headers.get("content-type") == "application/json":
         try:
             json_string = request.get_data().decode("utf-8")
@@ -694,10 +719,16 @@ def telegram_webhook():
             if update:
                 bot.process_new_updates([update])
             return "", 200
+        except UnicodeDecodeError as e:
+            logger.error(f"Webhook decode error: {e}")
+            return "", 400
         except Exception as e:
             logger.error(f"Webhook processing error: {e}", exc_info=True)
+            # Return 200 to prevent Telegram from retrying
             return "", 200
-    abort(403)
+    else:
+        logger.warning(f"Invalid content-type: {request.headers.get('content-type')}")
+        abort(403)
 
 @app.route("/setwebhook", methods=["GET"])
 def manual_set_webhook():
@@ -724,23 +755,76 @@ Last error message    : {info.last_error_message or 'لا يوجد'}
         return f"خطأ: {str(e)}"
 
 # ────────────────────────────────────────────────
+#               Flask Error Handlers
+# ────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
+    logger.warning(f"404 error: {request.url}")
+    return "Not Found", 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors"""
+    logger.error(f"500 error: {error}", exc_info=True)
+    return "Internal Server Error", 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle uncaught exceptions"""
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    return "Internal Server Error", 500
+
+# ────────────────────────────────────────────────
 #               Auto Webhook Setup
 # ────────────────────────────────────────────────
 
 def setup_webhook():
-    try:
-        bot.remove_webhook()
-        success = bot.set_webhook(
-            url=WEBHOOK_URL,
-            drop_pending_updates=True,
-            allow_updates=["message", "edited_message", "channel_post", "my_chat_member"]
-        )
-        logger.info(f"Webhook auto-setup → {WEBHOOK_URL} | Success: {success}")
-    except Exception as e:
-        logger.critical(f"Webhook setup failed: {str(e)}", exc_info=True)
+    """Setup webhook with retry logic for gunicorn compatibility"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # Remove existing webhook first
+            bot.remove_webhook(drop_pending_updates=True)
+            logger.info("Previous webhook removed successfully")
+            
+            # Set new webhook
+            success = bot.set_webhook(
+                url=WEBHOOK_URL,
+                drop_pending_updates=True,
+                max_connections=100,
+                allowed_updates=["message", "edited_message", "channel_post", "my_chat_member", "callback_query"]
+            )
+            
+            if success:
+                logger.info(f"✓ Webhook setup successful → {WEBHOOK_URL}")
+                # Verify webhook was set correctly
+                info = bot.get_webhook_info()
+                logger.info(f"Webhook info: URL={info.url}, Pending={info.pending_update_count}")
+                return True
+            else:
+                logger.warning(f"Webhook setup returned False (attempt {attempt + 1}/{max_retries})")
+                
+        except Exception as e:
+            logger.error(f"Webhook setup error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(retry_delay)
+            else:
+                logger.critical(f"Failed to setup webhook after {max_retries} attempts", exc_info=True)
+                return False
+    
+    return False
 
 # Run once on import (critical for Render + gunicorn)
-setup_webhook()
+# This ensures webhook is set up when gunicorn loads the module
+try:
+    setup_webhook()
+except Exception as e:
+    logger.critical(f"Critical error during initial webhook setup: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Local Development Only
