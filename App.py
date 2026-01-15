@@ -410,20 +410,10 @@ def show_status(message):
     
     bot.reply_to(message, status)
 
-@bot.message_handler(commands=['settings'])
-def show_settings(message):
-    """عرض لوحة التحكم"""
-    if message.chat.type not in ['group', 'supergroup']:
-        bot.reply_to(message, "❌ هذا الأمر يعمل فقط في المجموعات")
-        return
-    
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ هذا الأمر للمشرفين فقط")
-        return
-    
+def create_settings_markup(chat_id):
+    """إنشاء لوحة الإعدادات"""
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    
-    settings = get_chat_settings(message.chat.id)
+    settings = get_chat_settings(chat_id)
     
     # أزرار تفعيل/تعطيل الميزات
     markup.add(
@@ -477,6 +467,21 @@ def show_settings(message):
         )
     )
     
+    return markup
+
+@bot.message_handler(commands=['settings'])
+def show_settings(message):
+    """عرض لوحة التحكم"""
+    if message.chat.type not in ['group', 'supergroup']:
+        bot.reply_to(message, "❌ هذا الأمر يعمل فقط في المجموعات")
+        return
+    
+    if not is_user_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ هذا الأمر للمشرفين فقط")
+        return
+    
+    markup = create_settings_markup(message.chat.id)
+    
     bot.send_message(
         message.chat.id,
         "⚙️ لوحة التحكم\n\nاضغط على الأزرار لتفعيل أو تعطيل الميزات:",
@@ -508,9 +513,8 @@ def callback_handler(call):
         conn.commit()
         bot.answer_callback_query(call.id, "✅ تم التحديث")
         
-        # تحديث الرسالة
-        settings = get_chat_settings(chat_id)
-        markup = call.message.reply_markup
+        # تحديث الأزرار
+        markup = create_settings_markup(chat_id)
         bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
         
     elif call.data == 'reload_schedule':
