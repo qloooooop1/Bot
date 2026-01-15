@@ -612,8 +612,8 @@ def telegram_webhook():
 @app.route("/setwebhook", methods=["GET"])
 def manual_set_webhook():
     try:
-        bot.remove_webhook(drop_pending_updates=True)
-        success = bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        bot.remove_webhook()
+        success = bot.set_webhook(url=WEBHOOK_URL)
         return f"Webhook {'تم بنجاح' if success else 'فشل'} → {WEBHOOK_URL}"
     except Exception as e:
         return f"خطأ: {str(e)}"
@@ -639,7 +639,7 @@ Last error message    : {info.last_error_message or 'لا يوجد'}
 
 def setup_webhook():
     try:
-        bot.remove_webhook(drop_pending_updates=True)
+        bot.remove_webhook()
         success = bot.set_webhook(
             url=WEBHOOK_URL,
             drop_pending_updates=True,
