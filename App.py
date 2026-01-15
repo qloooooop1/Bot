@@ -1953,6 +1953,56 @@ def delete_service_messages(message: types.Message):
         # Fail silently as service message deletion is non-critical
         logger.debug(f"Could not delete service message in {chat_id}: {e}")
 
+# ────────────────────────────────────────────────
+#               Helper Functions for Callbacks
+# ────────────────────────────────────────────────
+
+def extract_chat_id_from_callback(callback_data: str) -> tuple:
+    """
+    Extract chat_id from callback data if present.
+    
+    Args:
+        callback_data (str): The callback data string
+        
+    Returns:
+        tuple: (chat_id, has_chat_id) where chat_id is int or None, has_chat_id is bool
+        
+    Example:
+        "morning_evening_settings_-123456" -> (-123456, True)
+        "morning_evening_settings" -> (None, False)
+    """
+    parts = callback_data.split("_")
+    
+    # Check if last part looks like a chat_id (starts with - or is numeric)
+    if len(parts) > 0:
+        try:
+            potential_chat_id = parts[-1]
+            # Try to parse as integer
+            chat_id = int(potential_chat_id)
+            return (chat_id, True)
+        except ValueError:
+            # Last part is not a number, no chat_id embedded
+            return (None, False)
+    
+    return (None, False)
+
+def create_back_button_callback(chat_id: int = None) -> str:
+    """
+    Create appropriate callback data for back button based on context.
+    
+    Args:
+        chat_id (int): The chat ID if in group-specific context, None otherwise
+        
+    Returns:
+        str: Callback data string
+    """
+    if chat_id:
+        import base64
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        return f"select_group_{chat_id_encoded}"
+    else:
+        return "open_settings"
+
 def cmd_settings_markup():
     """
     Generate the settings inline keyboard markup.
@@ -2438,18 +2488,38 @@ def callback_advanced_settings(call: types.CallbackQuery):
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "morning_evening_settings")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("morning_evening_settings"))
 def callback_morning_evening_settings(call: types.CallbackQuery):
     """
     Handle callback for morning and evening azkar settings.
     Shows options to enable/disable and configure timing.
+    Supports both old format (morning_evening_settings) and new format (morning_evening_settings_{chat_id})
     """
     try:
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
-        
-        if not is_admin:
-            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
-            return
+        # Extract chat_id from callback data if present
+        if "_" in call.data and call.data.count("_") >= 3:
+            # New format: morning_evening_settings_{chat_id}
+            parts = call.data.split("_")
+            try:
+                chat_id = int(parts[-1])
+                # Verify user is admin of this chat
+                if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                    return
+            except (ValueError, IndexError):
+                # Fallback to old behavior
+                chat_id = None
+                is_admin = is_user_admin_in_any_group(call.from_user.id)
+                if not is_admin:
+                    bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                    return
+        else:
+            # Old format: morning_evening_settings (backwards compatibility)
+            chat_id = None
+            is_admin = is_user_admin_in_any_group(call.from_user.id)
+            if not is_admin:
+                bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+                return
         
         bot.answer_callback_query(call.id, "أذكار الصباح والمساء")
         
@@ -2477,9 +2547,19 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data="morning_time_presets"),
-            types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data="evening_time_presets"),
-            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+            types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data="evening_time_presets")
         )
+        
+        # Add back button with appropriate callback data
+        if chat_id:
+            # New format: go back to group-specific settings
+            import base64
+            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        else:
+            # Old format: go back to general settings
+            markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        
         add_support_buttons(markup)
         
         bot.edit_message_text(
