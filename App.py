@@ -1,232 +1,243 @@
 import os
-import telebot
-from flask import Flask, request, abort
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+import sys
+import logging
+from datetime import datetime
 import pytz
 import random
 import sqlite3
-from datetime import datetime
 
-# ============= إعدادات ثابتة =============
-# وضع التشغيل مضبوط مباشرة على webhook
-BOT_MODE = 'webhook'
+from flask import Flask, request, abort
+import telebot
+from telebot import types
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-# رابط Webhook الثابت
-WEBHOOK_URL = 'https://bot-8c0e.onrender.com'
+# ────────────────────────────────────────────────
+#               Logging Setup
+# ────────────────────────────────────────────────
 
-# الحصول على التوكن من متغير البيئة أو قيمة افتراضية
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
-# التحقق من وجود التوكن
+# ────────────────────────────────────────────────
+#               Configuration
+# ────────────────────────────────────────────────
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is required. Please set it before running the bot.")
+    logger.critical("BOT_TOKEN غير موجود في متغيرات البيئة")
+    raise ValueError("BOT_TOKEN is required")
 
-# المنفذ
-PORT = int(os.environ.get('PORT', 5000))
+PORT = int(os.environ.get("PORT", 5000))
+TIMEZONE = pytz.timezone("Asia/Riyadh")
 
-# المنطقة الزمنية
-TIMEZONE = pytz.timezone('Asia/Riyadh')
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'bot-8c0e.onrender.com')}{WEBHOOK_PATH}"
 
-# مسار الـ webhook
-WEBHOOK_PATH = '/webhook'
+# ────────────────────────────────────────────────
+#               Instances
+# ────────────────────────────────────────────────
 
-# ============= إنشاء البوت وتطبيق Flask =============
-bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-
-# إنشاء المجدول
+bot = telebot.TeleBot(BOT_TOKEN)
 scheduler = BackgroundScheduler(timezone=TIMEZONE)
 scheduler.start()
 
-# ============= قاعدة البيانات =============
+# ────────────────────────────────────────────────
+#               Database
+# ────────────────────────────────────────────────
+
+DB_FILE = "bot_settings.db"
+
 def init_db():
-    """إنشاء قاعدة البيانات وجداولها"""
-    conn = sqlite3.connect('bot_settings.db')
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
-    # جدول إعدادات المجموعات
-    c.execute('''CREATE TABLE IF NOT EXISTS chat_settings
-                 (chat_id INTEGER PRIMARY KEY,
-                  is_enabled INTEGER DEFAULT 1,
-                  morning_azkar INTEGER DEFAULT 1,
-                  evening_azkar INTEGER DEFAULT 1,
-                  friday_sura INTEGER DEFAULT 1,
-                  friday_dua INTEGER DEFAULT 1,
-                  sleep_message INTEGER DEFAULT 1,
-                  random_content INTEGER DEFAULT 1,
-                  delete_service_messages INTEGER DEFAULT 1,
-                  content_interval INTEGER DEFAULT 180,
-                  morning_time TEXT DEFAULT '05:00',
-                  evening_time TEXT DEFAULT '18:00',
-                  sleep_time TEXT DEFAULT '22:00')''')
-    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS chat_settings (
+            chat_id INTEGER PRIMARY KEY,
+            is_enabled INTEGER DEFAULT 1,
+            morning_azkar INTEGER DEFAULT 1,
+            evening_azkar INTEGER DEFAULT 1,
+            friday_sura INTEGER DEFAULT 1,
+            friday_dua INTEGER DEFAULT 1,
+            sleep_message INTEGER DEFAULT 1,
+            delete_service_messages INTEGER DEFAULT 1,
+            morning_time TEXT DEFAULT '05:00',
+            evening_time TEXT DEFAULT '18:00',
+            sleep_time TEXT DEFAULT '22:00'
+        )
+    ''')
     conn.commit()
     conn.close()
+    logger.info("Database initialized")
 
-def get_chat_settings(chat_id):
-    """الحصول على إعدادات المجموعة"""
-    conn = sqlite3.connect('bot_settings.db')
+init_db()
+
+def get_chat_settings(chat_id: int) -> dict:
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('SELECT * FROM chat_settings WHERE chat_id = ?', (chat_id,))
-    result = c.fetchone()
+    c.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
     conn.close()
-    
-    if result is None:
-        # إنشاء إعدادات افتراضية
-        conn = sqlite3.connect('bot_settings.db')
+
+    if row is None:
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        c.execute('INSERT INTO chat_settings (chat_id) VALUES (?)', (chat_id,))
+        c.execute("INSERT INTO chat_settings (chat_id) VALUES (?)", (chat_id,))
         conn.commit()
         conn.close()
         return get_chat_settings(chat_id)
-    
+
     return {
-        'chat_id': result[0],
-        'is_enabled': result[1],
-        'morning_azkar': result[2],
-        'evening_azkar': result[3],
-        'friday_sura': result[4],
-        'friday_dua': result[5],
-        'sleep_message': result[6],
-        'random_content': result[7],
-        'delete_service_messages': result[8],
-        'content_interval': result[9],
-        'morning_time': result[10],
-        'evening_time': result[11],
-        'sleep_time': result[12]
+        "chat_id": row[0],
+        "is_enabled": bool(row[1]),
+        "morning_azkar": bool(row[2]),
+        "evening_azkar": bool(row[3]),
+        "friday_sura": bool(row[4]),
+        "friday_dua": bool(row[5]),
+        "sleep_message": bool(row[6]),
+        "delete_service_messages": bool(row[7]),
+        "morning_time": row[8],
+        "evening_time": row[9],
+        "sleep_time": row[10],
     }
 
-def update_chat_setting(chat_id, setting, value):
-    """تحديث إعداد معين للمجموعة"""
-    # قائمة الإعدادات المسموح بها لمنع SQL injection
-    allowed_settings = {
-        'is_enabled', 'morning_azkar', 'evening_azkar', 
-        'friday_sura', 'friday_dua', 'sleep_message', 
-        'random_content', 'delete_service_messages', 
-        'content_interval', 'morning_time', 'evening_time', 'sleep_time'
+def update_chat_setting(chat_id: int, key: str, value):
+    allowed_keys = {
+        "is_enabled", "morning_azkar", "evening_azkar",
+        "friday_sura", "friday_dua", "sleep_message",
+        "delete_service_messages", "morning_time",
+        "evening_time", "sleep_time"
     }
-    
-    if setting not in allowed_settings:
-        raise ValueError(f"Invalid setting: {setting}")
-    
-    conn = sqlite3.connect('bot_settings.db')
+    if key not in allowed_keys:
+        logger.error(f"Invalid setting key: {key}")
+        return
+
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute(f'UPDATE chat_settings SET {setting} = ? WHERE chat_id = ?', (value, chat_id))
+    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (int(value), chat_id))
     conn.commit()
     conn.close()
+    logger.info(f"Updated {key} = {value} for chat {chat_id}")
 
-# ============= المحتوى الإسلامي =============
-# أذكار الصباح
+# ────────────────────────────────────────────────
+#               Content - أذكار الصباح
+# ────────────────────────────────────────────────
+
 MORNING_AZKAR = [
     "🌅 *أذكار الصباح*\n\n"
     "﴿ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ ۚ لَّهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ ۗ مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ ۚ يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ ۖ وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ ۚ وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ ۖ وَلَا يَئُودُهُ حِفْظُهُمَا ۚ وَهُوَ الْعَلِيُّ الْعَظِيمُ ﴾\n\n"
     "📿 آية الكرسي - [البقرة: 255]",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "أَصْبَحْنَا وَأَصْبَحَ الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ، رَبِّ أَسْأَلُكَ خَيْرَ مَا فِي هَذَا الْيَوْمِ وَخَيْرَ مَا بَعْدَهُ، وَأَعُوذُ بِكَ مِنْ شَرِّ مَا فِي هَذَا الْيَوْمِ وَشَرِّ مَا بَعْدَهُ، رَبِّ أَعُوذُ بِكَ مِنَ الْكَسَلِ وَسُوءِ الْكِبَرِ، رَبِّ أَعُوذُ بِكَ مِنْ عَذَابٍ فِي النَّارِ وَعَذَابٍ فِي الْقَبْرِ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "اللَّهُمَّ بِكَ أَصْبَحْنَا، وَبِكَ أَمْسَيْنَا، وَبِكَ نَحْيَا، وَبِكَ نَمُوتُ، وَإِلَيْكَ النُّشُورُ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "أَصْبَحْنَا عَلَى فِطْرَةِ الْإِسْلَامِ، وَعَلَى كَلِمَةِ الْإِخْلَاصِ، وَعَلَى دِينِ نَبِيِّنَا مُحَمَّدٍ ﷺ، وَعَلَى مِلَّةِ أَبِينَا إِبْرَاهِيمَ، حَنِيفًا مُسْلِمًا وَمَا كَانَ مِنَ الْمُشْرِكِينَ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ\n\n"
     "✨ (مائة مرة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ\n\n"
     "✨ (عشر مرات أو مرة واحدة عند الاستيقاظ)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَافِيَةَ فِي الدُّنْيَا وَالْآخِرَةِ، اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَفْوَ وَالْعَافِيَةَ فِي دِينِي وَدُنْيَايَ وَأَهْلِي وَمَالِي، اللَّهُمَّ اسْتُرْ عَوْرَاتِي، وَآمِنْ رَوْعَاتِي، اللَّهُمَّ احْفَظْنِي مِنْ بَيْنِ يَدَيَّ، وَمِنْ خَلْفِي، وَعَنْ يَمِينِي، وَعَنْ شِمَالِي، وَمِنْ فَوْقِي، وَأَعُوذُ بِعَظَمَتِكَ أَنْ أُغْتَالَ مِنْ تَحْتِي\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "اللَّهُمَّ عَالِمَ الْغَيْبِ وَالشَّهَادَةِ فَاطِرَ السَّمَاوَاتِ وَالْأَرْضِ، رَبَّ كُلِّ شَيْءٍ وَمَلِيكَهُ، أَشْهَدُ أَنْ لَا إِلَهَ إِلَّا أَنْتَ، أَعُوذُ بِكَ مِنْ شَرِّ نَفْسِي، وَمِنْ شَرِّ الشَّيْطَانِ وَشِرْكِهِ، وَأَنْ أَقْتَرِفَ عَلَى نَفْسِي سُوءًا أَوْ أَجُرَّهُ إِلَى مُسْلِمٍ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "بِسْمِ اللَّهِ الَّذِي لَا يَضُرُّ مَعَ اسْمِهِ شَيْءٌ فِي الْأَرْضِ وَلَا فِي السَّمَاءِ وَهُوَ السَّمِيعُ الْعَلِيمُ\n\n"
     "✨ (ثلاث مرات)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "رَضِيتُ بِاللَّهِ رَبًّا، وَبِالْإِسْلَامِ دِينًا، وَبِمُحَمَّدٍ ﷺ نَبِيًّا\n\n"
     "✨ (ثلاث مرات)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ، وَلَا تَكِلْنِي إِلَى نَفْسِي طَرْفَةَ عَيْنٍ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌅 *أذكار الصباح*\n\n"
     "﴿ قُلْ هُوَ اللَّهُ أَحَدٌ * اللَّهُ الصَّمَدُ * لَمْ يَلِدْ وَلَمْ يُولَدْ * وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ ﴾\n\n"
     "📿 سورة الإخلاص (ثلاث مرات)",
 ]
 
-# أذكار المساء
+# ────────────────────────────────────────────────
+#               أذكار المساء
+# ────────────────────────────────────────────────
+
 EVENING_AZKAR = [
     "🌙 *أذكار المساء*\n\n"
     "﴿ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ ۚ لَّهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ ۗ مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ ۚ يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ ۖ وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ ۚ وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ ۖ وَلَا يَئُودُهُ حِفْظُهُمَا ۚ وَهُوَ الْعَلِيُّ الْعَظِيمُ ﴾\n\n"
     "📿 آية الكرسي - [البقرة: 255]",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "أَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ، رَبِّ أَسْأَلُكَ خَيْرَ مَا فِي هَذِهِ اللَّيْلَةِ وَخَيْرَ مَا بَعْدَهَا، وَأَعُوذُ بِكَ مِنْ شَرِّ مَا فِي هَذِهِ اللَّيْلَةِ وَشَرِّ مَا بَعْدَهَا، رَبِّ أَعُوذُ بِكَ مِنَ الْكَسَلِ وَسُوءِ الْكِبَرِ، رَبِّ أَعُوذُ بِكَ مِنْ عَذَابٍ فِي النَّارِ وَعَذَابٍ فِي الْقَبْرِ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "اللَّهُمَّ بِكَ أَمْسَيْنَا، وَبِكَ أَصْبَحْنَا، وَبِكَ نَحْيَا، وَبِكَ نَمُوتُ، وَإِلَيْكَ الْمَصِيرُ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "أَمْسَيْنَا عَلَى فِطْرَةِ الْإِسْلَامِ، وَعَلَى كَلِمَةِ الْإِخْلَاصِ، وَعَلَى دِينِ نَبِيِّنَا مُحَمَّدٍ ﷺ، وَعَلَى مِلَّةِ أَبِينَا إِبْرَاهِيمَ، حَنِيفًا مُسْلِمًا وَمَا كَانَ مِنَ الْمُشْرِكِينَ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ\n\n"
     "✨ (مائة مرة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ\n\n"
     "✨ (عشر مرات)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَافِيَةَ فِي الدُّنْيَا وَالْآخِرَةِ، اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَفْوَ وَالْعَافِيَةَ فِي دِينِي وَدُنْيَايَ وَأَهْلِي وَمَالِي، اللَّهُمَّ اسْتُرْ عَوْرَاتِي، وَآمِنْ رَوْعَاتِي، اللَّهُمَّ احْفَظْنِي مِنْ بَيْنِ يَدَيَّ، وَمِنْ خَلْفِي، وَعَنْ يَمِينِي، وَعَنْ شِمَالِي، وَمِنْ فَوْقِي، وَأَعُوذُ بِعَظَمَتِكَ أَنْ أُغْتَالَ مِنْ تَحْتِي\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "اللَّهُمَّ عَالِمَ الْغَيْبِ وَالشَّهَادَةِ فَاطِرَ السَّمَاوَاتِ وَالْأَرْضِ، رَبَّ كُلِّ شَيْءٍ وَمَلِيكَهُ، أَشْهَدُ أَنْ لَا إِلَهَ إِلَّا أَنْتَ، أَعُوذُ بِكَ مِنْ شَرِّ نَفْسِي، وَمِنْ شَرِّ الشَّيْطَانِ وَشِرْكِهِ، وَأَنْ أَقْتَرِفَ عَلَى نَفْسِي سُوءًا أَوْ أَجُرَّهُ إِلَى مُسْلِمٍ\n\n"
     "✨ (مرة واحدة)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "بِسْمِ اللَّهِ الَّذِي لَا يَضُرُّ مَعَ اسْمِهِ شَيْءٌ فِي الْأَرْضِ وَلَا فِي السَّمَاءِ وَهُوَ السَّمِيعُ الْعَلِيمُ\n\n"
     "✨ (ثلاث مرات)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "رَضِيتُ بِاللَّهِ رَبًّا، وَبِالْإِسْلَامِ دِينًا، وَبِمُحَمَّدٍ ﷺ نَبِيًّا\n\n"
     "✨ (ثلاث مرات)",
-    
+
     "🌙 *أذكار المساء*\n\n"
     "﴿ قُلْ هُوَ اللَّهُ أَحَدٌ * اللَّهُ الصَّمَدُ * لَمْ يَلِدْ وَلَمْ يُولَدْ * وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ ﴾\n\n"
     "📿 سورة الإخلاص (ثلاث مرات)",
 ]
 
-# أدعية الجمعة
 FRIDAY_DUA = [
     "🕌 *دعاء يوم الجمعة*\n\n"
     "اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى سَيِّدِنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ\n\n"
     "✨ قال رسول الله ﷺ: «مَن صلَّى عليَّ صلاةً واحدةً صلَّى اللهُ عليه بها عشرًا»",
-    
+
     "🕌 *دعاء يوم الجمعة*\n\n"
     "اللَّهُمَّ إِنِّي أَسْأَلُكَ مِنَ الْخَيْرِ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ، وَأَعُوذُ بِكَ مِنَ الشَّرِّ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ\n\n"
     "✨ دعاء مأثور",
 ]
 
-# تذكير بسورة الكهف
 KAHF_REMINDER = (
     "📿 *تذكير بسورة الكهف*\n\n"
     "السلام عليكم ورحمة الله وبركاته\n\n"
@@ -235,7 +246,6 @@ KAHF_REMINDER = (
     "🕌 جعلنا الله وإياكم من المواظبين على الطاعات"
 )
 
-# رسالة النوم
 SLEEP_MESSAGE = (
     "😴 *أذكار النوم*\n\n"
     "﴿ قُلْ هُوَ اللَّهُ أَحَدٌ * اللَّهُ الصَّمَدُ * لَمْ يَلِدْ وَلَمْ يُولَدْ * وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ ﴾\n\n"
@@ -244,381 +254,289 @@ SLEEP_MESSAGE = (
     "🌙 تصبحون على خير"
 )
 
-# ============= الدوال المساعدة =============
-def is_user_admin(chat_id, user_id):
-    """التحقق من أن المستخدم مشرف في المجموعة"""
-    try:
-        member = bot.get_chat_member(chat_id, user_id)
-        return member.status in ['creator', 'administrator']
-    except:
-        return False
+# ────────────────────────────────────────────────
+#               Sending Functions
+# ────────────────────────────────────────────────
 
-def send_azkar(chat_id, azkar_type):
-    """إرسال الأذكار"""
+def send_azkar(chat_id: int, azkar_type: str):
     try:
         settings = get_chat_settings(chat_id)
-        if not settings['is_enabled']:
+        if not settings["is_enabled"]:
             return
-        
-        if azkar_type == 'morning' and settings['morning_azkar']:
-            for azkar in MORNING_AZKAR:
-                bot.send_message(chat_id, azkar, parse_mode='Markdown')
-        
-        elif azkar_type == 'evening' and settings['evening_azkar']:
-            for azkar in EVENING_AZKAR:
-                bot.send_message(chat_id, azkar, parse_mode='Markdown')
-        
-        elif azkar_type == 'friday_kahf' and settings['friday_sura']:
-            bot.send_message(chat_id, KAHF_REMINDER, parse_mode='Markdown')
-        
-        elif azkar_type == 'friday_dua' and settings['friday_dua']:
-            for dua in FRIDAY_DUA:
-                bot.send_message(chat_id, dua, parse_mode='Markdown')
-        
-        elif azkar_type == 'sleep' and settings['sleep_message']:
-            bot.send_message(chat_id, SLEEP_MESSAGE, parse_mode='Markdown')
-    
-    except Exception as e:
-        print(f"Error sending azkar: {e}")
 
-def schedule_chat_jobs(chat_id):
-    """جدولة المهام للمجموعة"""
+        messages = []
+
+        if azkar_type == "morning" and settings["morning_azkar"]:
+            messages = MORNING_AZKAR
+        elif azkar_type == "evening" and settings["evening_azkar"]:
+            messages = EVENING_AZKAR
+        elif azkar_type == "friday_kahf" and settings["friday_sura"]:
+            messages = [KAHF_REMINDER]
+        elif azkar_type == "friday_dua" and settings["friday_dua"]:
+            messages = FRIDAY_DUA
+        elif azkar_type == "sleep" and settings["sleep_message"]:
+            messages = [SLEEP_MESSAGE]
+
+        for msg in messages:
+            try:
+                bot.send_message(chat_id, msg, parse_mode="Markdown")
+                logger.info(f"Sent {azkar_type} message to {chat_id}")
+            except telebot.apihelper.ApiTelegramException as e:
+                if "blocked" in str(e).lower() or "kicked" in str(e).lower():
+                    logger.warning(f"Bot blocked/kicked from {chat_id}")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                else:
+                    logger.error(f"Failed sending to {chat_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error in send_azkar ({azkar_type}) for {chat_id}: {e}", exc_info=True)
+
+# ────────────────────────────────────────────────
+#               Scheduling
+# ────────────────────────────────────────────────
+
+def schedule_chat_jobs(chat_id: int):
     settings = get_chat_settings(chat_id)
-    
-    # إزالة المهام القديمة
+
+    # Remove previous jobs
     for job in scheduler.get_jobs():
         if str(chat_id) in job.id:
             job.remove()
-    
-    # جدولة أذكار الصباح
-    if settings['morning_azkar']:
-        hour, minute = settings['morning_time'].split(':')
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(hour=int(hour), minute=int(minute)),
-            args=[chat_id, 'morning'],
-            id=f'morning_{chat_id}'
-        )
-    
-    # جدولة أذكار المساء
-    if settings['evening_azkar']:
-        hour, minute = settings['evening_time'].split(':')
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(hour=int(hour), minute=int(minute)),
-            args=[chat_id, 'evening'],
-            id=f'evening_{chat_id}'
-        )
-    
-    # جدولة سورة الكهف (الجمعة 9:00)
-    if settings['friday_sura']:
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(day_of_week='fri', hour=9, minute=0),
-            args=[chat_id, 'friday_kahf'],
-            id=f'kahf_{chat_id}'
-        )
-    
-    # جدولة أدعية الجمعة (الجمعة 10:00)
-    if settings['friday_dua']:
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(day_of_week='fri', hour=10, minute=0),
-            args=[chat_id, 'friday_dua'],
-            id=f'friday_{chat_id}'
-        )
-    
-    # جدولة رسالة النوم
-    if settings['sleep_message']:
-        hour, minute = settings['sleep_time'].split(':')
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(hour=int(hour), minute=int(minute)),
-            args=[chat_id, 'sleep'],
-            id=f'sleep_{chat_id}'
-        )
 
-# ============= معالجات البوت =============
-
-# معالج التغييرات في صلاحيات البوت (التفعيل التلقائي)
-@bot.my_chat_member_handler()
-def handle_my_chat_member(update):
-    """معالجة تغييرات عضوية البوت في المجموعات"""
-    try:
-        chat = update.chat
-        new_status = update.new_chat_member.status
-        
-        # إذا تم تعيين البوت كمشرف
-        if new_status == 'administrator':
-            # تفعيل البوت تلقائياً
-            update_chat_setting(chat.id, 'is_enabled', 1)
-            schedule_chat_jobs(chat.id)
-            
-            # إرسال رسالة ترحيب
-            welcome_msg = (
-                "✅ *تم تفعيل البوت تلقائياً!*\n\n"
-                "🌟 بارك الله فيكم، سيقوم البوت بإرسال:\n"
-                "🌅 أذكار الصباح في الساعة 05:00\n"
-                "🌙 أذكار المساء في الساعة 18:00\n"
-                "📿 تذكير بسورة الكهف يوم الجمعة 09:00\n"
-                "🕌 أدعية الجمعة في الساعة 10:00\n"
-                "😴 رسالة قبل النوم في الساعة 22:00\n\n"
-                "⚙️ للتحكم في الإعدادات، استخدم /settings\n"
-                "📊 لعرض الحالة، استخدم /status"
+    # Morning Azkar
+    if settings["morning_azkar"]:
+        try:
+            h, m = map(int, settings["morning_time"].split(":"))
+            scheduler.add_job(
+                send_azkar,
+                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                args=[chat_id, "morning"],
+                id=f"morning_{chat_id}",
+                replace_existing=True
             )
-            bot.send_message(chat.id, welcome_msg, parse_mode='Markdown')
-        
-        # إذا تمت إزالة صلاحيات المشرف
-        elif new_status in ['member', 'left', 'kicked']:
-            update_chat_setting(chat.id, 'is_enabled', 0)
-            # إيقاف جميع المهام المجدولة
-            for job in scheduler.get_jobs():
-                if str(chat.id) in job.id:
-                    job.remove()
-    
-    except Exception as e:
-        print(f"Error in my_chat_member handler: {e}")
+        except:
+            logger.error(f"Invalid morning time for {chat_id}")
 
-# معالج رسائل الخدمة (للحذف التلقائي)
+    # Evening Azkar
+    if settings["evening_azkar"]:
+        try:
+            h, m = map(int, settings["evening_time"].split(":"))
+            scheduler.add_job(
+                send_azkar,
+                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                args=[chat_id, "evening"],
+                id=f"evening_{chat_id}",
+                replace_existing=True
+            )
+        except:
+            logger.error(f"Invalid evening time for {chat_id}")
+
+    # Friday Kahf reminder
+    if settings["friday_sura"]:
+        scheduler.add_job(
+            send_azkar,
+            CronTrigger(day_of_week="fri", hour=9, minute=0, timezone=TIMEZONE),
+            args=[chat_id, "friday_kahf"],
+            id=f"kahf_{chat_id}",
+            replace_existing=True
+        )
+
+    # Friday Dua
+    if settings["friday_dua"]:
+        scheduler.add_job(
+            send_azkar,
+            CronTrigger(day_of_week="fri", hour=10, minute=0, timezone=TIMEZONE),
+            args=[chat_id, "friday_dua"],
+            id=f"friday_dua_{chat_id}",
+            replace_existing=True
+        )
+
+    # Sleep message
+    if settings["sleep_message"]:
+        try:
+            h, m = map(int, settings["sleep_time"].split(":"))
+            scheduler.add_job(
+                send_azkar,
+                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                args=[chat_id, "sleep"],
+                id=f"sleep_{chat_id}",
+                replace_existing=True
+            )
+        except:
+            logger.error(f"Invalid sleep time for {chat_id}")
+
+    logger.info(f"Scheduled jobs for chat {chat_id}")
+
+# ────────────────────────────────────────────────
+#               Bot Handlers
+# ────────────────────────────────────────────────
+
+@bot.my_chat_member_handler()
+def my_chat_member_handler(update: types.ChatMemberUpdated):
+    chat_id = update.chat.id
+    new_status = update.new_chat_member.status
+
+    if new_status in ["administrator", "creator"]:
+        update_chat_setting(chat_id, "is_enabled", 1)
+        schedule_chat_jobs(chat_id)
+        try:
+            bot.send_message(
+                chat_id,
+                "✅ *تم تفعيل البوت تلقائياً!*\n\n"
+                "سيبدأ بإرسال الأذكار في الأوقات المحددة\n"
+                "استخدم /settings لتعديل الإعدادات",
+                parse_mode="Markdown"
+            )
+            logger.info(f"Bot activated in chat {chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send activation message to {chat_id}: {e}")
+    else:
+        update_chat_setting(chat_id, "is_enabled", 0)
+        for job in scheduler.get_jobs():
+            if str(chat_id) in job.id:
+                job.remove()
+        logger.info(f"Bot deactivated in chat {chat_id}")
+
 @bot.message_handler(content_types=[
-    'new_chat_members', 
-    'left_chat_member',
-    'new_chat_title',
-    'new_chat_photo',
-    'delete_chat_photo',
-    'group_chat_created',
-    'supergroup_chat_created',
-    'channel_chat_created',
-    'pinned_message',
-    'voice_chat_started',
-    'voice_chat_ended',
-    'voice_chat_participants_invited'
+    'new_chat_members', 'left_chat_member', 'new_chat_title',
+    'new_chat_photo', 'delete_chat_photo', 'group_chat_created',
+    'supergroup_chat_created', 'channel_chat_created', 'pinned_message',
+    'voice_chat_started', 'voice_chat_ended', 'voice_chat_participants_invited'
 ])
-def delete_service_messages(message):
-    """حذف رسائل الخدمة التلقائية"""
+def delete_service_messages(message: types.Message):
     try:
         chat_id = message.chat.id
         settings = get_chat_settings(chat_id)
-        
-        # التحقق من تفعيل ميزة حذف رسائل الخدمة
-        if settings['is_enabled'] and settings['delete_service_messages']:
+        if settings["delete_service_messages"]:
             bot.delete_message(chat_id, message.message_id)
-    
-    except Exception as e:
-        print(f"Error deleting service message: {e}")
+            logger.debug(f"Deleted service message in {chat_id}")
+    except:
+        pass
 
-# معالج أمر /start
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    """معالج أمر البداية"""
-    chat_type = message.chat.type
-    
-    if chat_type == 'private':
-        # في المحادثة الخاصة
-        markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+@bot.message_handler(commands=["start"])
+def cmd_start(message: types.Message):
+    if message.chat.type == "private":
+        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            telebot.types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
-            telebot.types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar")
+            types.InlineKeyboardButton("المطور", url="https://t.me/dev3bod"),
+            types.InlineKeyboardButton("المجموعة الرسمية", url="https://t.me/NourAdhkar")
         )
-        
-        welcome_text = (
-            "🌟 *مرحباً بك في بوت الأذكار الإسلامية* 🌟\n\n"
-            "📿 هذا البوت يقوم بإرسال الأذكار والأدعية الإسلامية تلقائياً في المجموعات\n\n"
-            "✨ *المميزات:*\n"
-            "🌅 أذكار الصباح\n"
-            "🌙 أذكار المساء\n"
-            "📿 سورة الكهف (الجمعة)\n"
-            "🕌 أدعية الجمعة\n"
-            "😴 رسالة قبل النوم\n"
-            "🗑️ حذف رسائل الخدمة تلقائياً\n\n"
-            "📝 *كيفية الاستخدام:*\n"
-            "1️⃣ أضف البوت إلى مجموعتك\n"
-            "2️⃣ اجعله مشرفاً\n"
-            "3️⃣ سيعمل تلقائياً! ✅\n\n"
-            "⚙️ استخدم /settings للتحكم في الإعدادات\n\n"
-            "تم تفعيل البوت بنجاح! 🚀"
+        bot.reply_to(
+            message,
+            "🌟 *مرحباً بك في بوت نور الذكر* 🌟\n\n"
+            "📿 بوت يرسل الأذكار والأدعية يومياً في المجموعات\n\n"
+            "✨ للتفعيل:\n"
+            "1. أضف البوت إلى مجموعتك\n"
+            "2. اجعله مشرفاً\n"
+            "3. سيعمل تلقائياً\n\n"
+            "⚙️ /settings للإعدادات\n"
+            "📊 /status للحالة",
+            reply_markup=markup,
+            parse_mode="Markdown"
         )
-        
-        bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown', reply_markup=markup)
-    
+        logger.info(f"/start received in private chat from {message.from_user.id}")
     else:
-        # في المجموعة
-        bot.reply_to(message, "تم تفعيل البوت بنجاح! 🚀")
+        bot.reply_to(message, "تم التفعيل! استخدم /settings للإعدادات")
+        logger.info(f"/start received in group {message.chat.id}")
 
-# معالج أمر /settings
-@bot.message_handler(commands=['settings'])
-def settings_command(message):
-    """معالج أمر الإعدادات"""
-    if message.chat.type == 'private':
-        bot.send_message(
-            message.chat.id,
-            "⚠️ هذا الأمر يعمل فقط في المجموعات"
-        )
+@bot.message_handler(commands=["settings"])
+def cmd_settings(message: types.Message):
+    if message.chat.type == "private":
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
         return
-    
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.send_message(
-            message.chat.id,
-            "⚠️ هذا الأمر متاح للمشرفين فقط"
-        )
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
         return
-    
+
     settings = get_chat_settings(message.chat.id)
-    
-    # إنشاء لوحة الأزرار
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    
-    # أزرار تفعيل/تعطيل الميزات
-    morning_btn = telebot.types.InlineKeyboardButton(
-        f"🌅 {'✓' if settings['morning_azkar'] else '✗'} أذكار الصباح",
-        callback_data='toggle_morning'
-    )
-    evening_btn = telebot.types.InlineKeyboardButton(
-        f"🌙 {'✓' if settings['evening_azkar'] else '✗'} أذكار المساء",
-        callback_data='toggle_evening'
-    )
-    kahf_btn = telebot.types.InlineKeyboardButton(
-        f"📿 {'✓' if settings['friday_sura'] else '✗'} سورة الكهف",
-        callback_data='toggle_kahf'
-    )
-    friday_btn = telebot.types.InlineKeyboardButton(
-        f"🕌 {'✓' if settings['friday_dua'] else '✗'} أدعية الجمعة",
-        callback_data='toggle_friday'
-    )
-    sleep_btn = telebot.types.InlineKeyboardButton(
-        f"😴 {'✓' if settings['sleep_message'] else '✗'} رسالة النوم",
-        callback_data='toggle_sleep'
-    )
-    service_btn = telebot.types.InlineKeyboardButton(
-        f"🗑️ {'✓' if settings['delete_service_messages'] else '✗'} حذف رسائل الخدمة",
-        callback_data='toggle_service'
-    )
-    
-    markup.add(morning_btn, evening_btn)
-    markup.add(kahf_btn, friday_btn)
-    markup.add(sleep_btn, service_btn)
-    
-    settings_text = (
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    btns = [
+        ("morning_azkar", "🌅 أذكار الصباح"),
+        ("evening_azkar", "🌙 أذكار المساء"),
+        ("friday_sura", "📿 سورة الكهف"),
+        ("friday_dua", "🕌 أدعية الجمعة"),
+        ("sleep_message", "😴 رسالة النوم"),
+        ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
+    ]
+
+    for key, label in btns:
+        status = "✓" if settings[key] else "✗"
+        markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+
+    text = (
         "⚙️ *لوحة التحكم*\n\n"
-        f"📊 حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-        "📅 *الأوقات المجدولة:*\n"
+        f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
+        "الأوقات المجدولة:\n"
         f"🌅 الصباح: {settings['morning_time']}\n"
         f"🌙 المساء: {settings['evening_time']}\n"
         f"😴 النوم: {settings['sleep_time']}\n"
         f"📿 سورة الكهف: الجمعة 09:00\n"
         f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
-        "💡 اضغط على الأزرار للتحكم بالميزات"
+        "اضغط لتغيير الإعدادات"
     )
-    
+
     bot.send_message(
         message.chat.id,
-        settings_text,
-        parse_mode='Markdown',
+        text,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    logger.info(f"/settings opened by {message.from_user.id} in {message.chat.id}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
+def callback_toggle(call: types.CallbackQuery):
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+        return
+
+    key = call.data.split("_", 1)[1]
+    settings = get_chat_settings(call.message.chat.id)
+    new_value = not settings[key]
+    update_chat_setting(call.message.chat.id, key, new_value)
+    schedule_chat_jobs(call.message.chat.id)
+
+    # Refresh markup
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        ("morning_azkar", "🌅 أذكار الصباح"),
+        ("evening_azkar", "🌙 أذكار المساء"),
+        ("friday_sura", "📿 سورة الكهف"),
+        ("friday_dua", "🕌 أدعية الجمعة"),
+        ("sleep_message", "😴 رسالة النوم"),
+        ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
+    ]
+
+    for k, label in btns:
+        status = "✓" if get_chat_settings(call.message.chat.id)[k] else "✗"
+        markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{k}"))
+
+    text = call.message.text.split("\n\n")[0] + "\n\n" + call.message.text.split("\n\n")[1]
+    bot.edit_message_text(
+        text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
         reply_markup=markup
     )
 
-# معالج أزرار الإعدادات
-@bot.callback_query_handler(func=lambda call: call.data.startswith('toggle_'))
-def handle_settings_callback(call):
-    """معالج أزرار الإعدادات"""
-    if not is_user_admin(call.message.chat.id, call.from_user.id):
-        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط")
-        return
-    
-    chat_id = call.message.chat.id
-    settings = get_chat_settings(chat_id)
-    
-    # تحديد الإعداد المراد تغييره
-    setting_map = {
-        'toggle_morning': 'morning_azkar',
-        'toggle_evening': 'evening_azkar',
-        'toggle_kahf': 'friday_sura',
-        'toggle_friday': 'friday_dua',
-        'toggle_sleep': 'sleep_message',
-        'toggle_service': 'delete_service_messages'
-    }
-    
-    setting_key = setting_map.get(call.data)
-    if setting_key:
-        # عكس القيمة الحالية
-        new_value = 0 if settings[setting_key] else 1
-        update_chat_setting(chat_id, setting_key, new_value)
-        
-        # إعادة جدولة المهام
-        schedule_chat_jobs(chat_id)
-        
-        # تحديث الرسالة
-        settings = get_chat_settings(chat_id)
-        
-        # إنشاء لوحة الأزرار المحدثة
-        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-        
-        morning_btn = telebot.types.InlineKeyboardButton(
-            f"🌅 {'✓' if settings['morning_azkar'] else '✗'} أذكار الصباح",
-            callback_data='toggle_morning'
-        )
-        evening_btn = telebot.types.InlineKeyboardButton(
-            f"🌙 {'✓' if settings['evening_azkar'] else '✗'} أذكار المساء",
-            callback_data='toggle_evening'
-        )
-        kahf_btn = telebot.types.InlineKeyboardButton(
-            f"📿 {'✓' if settings['friday_sura'] else '✗'} سورة الكهف",
-            callback_data='toggle_kahf'
-        )
-        friday_btn = telebot.types.InlineKeyboardButton(
-            f"🕌 {'✓' if settings['friday_dua'] else '✗'} أدعية الجمعة",
-            callback_data='toggle_friday'
-        )
-        sleep_btn = telebot.types.InlineKeyboardButton(
-            f"😴 {'✓' if settings['sleep_message'] else '✗'} رسالة النوم",
-            callback_data='toggle_sleep'
-        )
-        service_btn = telebot.types.InlineKeyboardButton(
-            f"🗑️ {'✓' if settings['delete_service_messages'] else '✗'} حذف رسائل الخدمة",
-            callback_data='toggle_service'
-        )
-        
-        markup.add(morning_btn, evening_btn)
-        markup.add(kahf_btn, friday_btn)
-        markup.add(sleep_btn, service_btn)
-        
-        settings_text = (
-            "⚙️ *لوحة التحكم*\n\n"
-            f"📊 حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-            "📅 *الأوقات المجدولة:*\n"
-            f"🌅 الصباح: {settings['morning_time']}\n"
-            f"🌙 المساء: {settings['evening_time']}\n"
-            f"😴 النوم: {settings['sleep_time']}\n"
-            f"📿 سورة الكهف: الجمعة 09:00\n"
-            f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
-            "💡 اضغط على الأزرار للتحكم بالميزات"
-        )
-        
-        bot.edit_message_text(
-            settings_text,
-            chat_id,
-            call.message.message_id,
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        
-        bot.answer_callback_query(call.id, "✅ تم التحديث")
+    bot.answer_callback_query(call.id, "تم التحديث")
 
-# معالج أمر /status
-@bot.message_handler(commands=['status'])
-def status_command(message):
-    """معالج أمر عرض الحالة"""
-    if message.chat.type == 'private':
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
+@bot.message_handler(commands=["status"])
+def cmd_status(message: types.Message):
+    if message.chat.type == "private":
+        bot.send_message(message.chat.id, "هذا الأمر يعمل فقط في المجموعات")
         return
-    
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "هذا الأمر متاح للمشرفين فقط")
         return
-    
+
     settings = get_chat_settings(message.chat.id)
-    
-    status_text = (
+
+    text = (
         "📊 *حالة البوت*\n\n"
         f"البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
         "*الميزات المفعلة:*\n"
@@ -635,134 +553,110 @@ def status_command(message):
         f"📿 سورة الكهف: الجمعة 09:00\n"
         f"🕌 دعاء الجمعة: الجمعة 10:00"
     )
-    
-    bot.send_message(message.chat.id, status_text, parse_mode='Markdown')
 
-# معالج أمر /enable
-@bot.message_handler(commands=['enable'])
-def enable_command(message):
-    """تفعيل البوت"""
-    if message.chat.type == 'private':
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    logger.info(f"/status requested by {message.from_user.id} in {message.chat.id}")
+
+@bot.message_handler(commands=["enable"])
+def cmd_enable(message: types.Message):
+    if message.chat.type == "private":
         return
-    
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "هذا الأمر متاح للمشرفين فقط")
         return
-    
-    update_chat_setting(message.chat.id, 'is_enabled', 1)
+
+    update_chat_setting(message.chat.id, "is_enabled", 1)
     schedule_chat_jobs(message.chat.id)
-    
-    bot.send_message(
-        message.chat.id,
-        "✅ تم تفعيل البوت بنجاح!\n\n"
-        "استخدم /settings للتحكم في الإعدادات"
-    )
+    bot.send_message(message.chat.id, "✅ تم تفعيل البوت")
+    logger.info(f"Bot enabled in {message.chat.id}")
 
-# معالج أمر /disable
-@bot.message_handler(commands=['disable'])
-def disable_command(message):
-    """تعطيل البوت"""
-    if message.chat.type == 'private':
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
+@bot.message_handler(commands=["disable"])
+def cmd_disable(message: types.Message):
+    if message.chat.type == "private":
         return
-    
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "هذا الأمر متاح للمشرفين فقط")
         return
-    
-    update_chat_setting(message.chat.id, 'is_enabled', 0)
-    
-    # إيقاف جميع المهام
+
+    update_chat_setting(message.chat.id, "is_enabled", 0)
     for job in scheduler.get_jobs():
         if str(message.chat.id) in job.id:
             job.remove()
-    
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
+    logger.info(f"Bot disabled in {message.chat.id}")
 
-# ============= Flask Routes للـ Webhook =============
+# ────────────────────────────────────────────────
+#               Flask Routes
+# ────────────────────────────────────────────────
 
-@app.route('/')
-def index():
-    """الصفحة الرئيسية"""
-    return "🤖 البوت يعمل بنجاح!"
+@app.route("/")
+def home():
+    return "نور الذكر – البوت يعمل ✓"
 
-@app.route('/setwebhook', methods=['GET'])
-def set_webhook():
-    """ضبط الـ webhook"""
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    if request.headers.get("content-type") == "application/json":
+        try:
+            json_string = request.get_data().decode("utf-8")
+            update = types.Update.de_json(json_string)
+            if update:
+                bot.process_new_updates([update])
+            return "", 200
+        except Exception as e:
+            logger.error(f"Webhook processing error: {e}", exc_info=True)
+            return "", 200
+    abort(403)
+
+@app.route("/setwebhook", methods=["GET"])
+def manual_set_webhook():
     try:
-        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-        bot.remove_webhook()
-        result = bot.set_webhook(url=webhook_url)
-        if result:
-            return f"✅ تم ضبط Webhook بنجاح!"
-        else:
-            return "❌ فشل ضبط Webhook"
+        bot.remove_webhook(drop_pending_updates=True)
+        success = bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        return f"Webhook {'تم بنجاح' if success else 'فشل'} → {WEBHOOK_URL}"
     except Exception as e:
-        return f"❌ خطأ: {str(e)}"
+        return f"خطأ: {str(e)}"
 
-@app.route(WEBHOOK_PATH, methods=['POST'])
-def webhook():
-    """معالج الـ webhook"""
-    if request.content_type == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        abort(403)
+@app.route("/check-webhook", methods=["GET"])
+def check_webhook_status():
+    try:
+        info = bot.get_webhook_info()
+        return f"""
+        <pre>
+Webhook URL           : {info.url or 'غير مضبوط'}
+Pending updates       : {info.pending_update_count}
+Last error date       : {info.last_error_date}
+Last error message    : {info.last_error_message or 'لا يوجد'}
+        </pre>
+        """
+    except Exception as e:
+        return f"خطأ: {str(e)}"
 
-@app.route('/health', methods=['GET'])
-def health():
-    """فحص صحة البوت"""
-    return {
-        'status': 'healthy',
-        'mode': BOT_MODE,
-        'timestamp': datetime.now().isoformat()
-    }
-
-# ============= بدء التشغيل =============
+# ────────────────────────────────────────────────
+#               Auto Webhook Setup
+# ────────────────────────────────────────────────
 
 def setup_webhook():
-    """إعداد الـ webhook تلقائياً"""
     try:
-        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-        bot.remove_webhook()  # إزالة أي Webhook قديم
-        success = bot.set_webhook(url=webhook_url)
-        print(f"Webhook set: {success} to {webhook_url}")
-        return success
+        bot.remove_webhook(drop_pending_updates=True)
+        success = bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True,
+            allow_updates=["message", "edited_message", "channel_post", "my_chat_member"]
+        )
+        logger.info(f"Webhook auto-setup → {WEBHOOK_URL} | Success: {success}")
     except Exception as e:
-        print(f"⚠️ تحذير: فشل ضبط Webhook: {e}")
-        return False
+        logger.critical(f"Webhook setup failed: {str(e)}", exc_info=True)
 
-def main():
-    """الدالة الرئيسية لبدء البوت"""
-    print("🚀 بدء تشغيل بوت الأذكار الإسلامية...")
-    print(f"📡 وضع التشغيل: {BOT_MODE}")
-    
-    # إنشاء قاعدة البيانات
-    init_db()
-    print("✅ تم إنشاء قاعدة البيانات")
-    
-    if BOT_MODE == 'webhook':
-        print(f"🌐 رابط Webhook: {WEBHOOK_URL}")
-        print(f"🔧 إعداد Webhook تلقائياً...")
-        
-        # إعداد الـ webhook تلقائياً عند التشغيل
-        success = setup_webhook()
-        if not success:
-            print("💡 يمكنك ضبطه يدوياً عبر زيارة: /setwebhook")
-        
-        print(f"🚀 تشغيل Flask على المنفذ {PORT}...")
-        app.run(host='0.0.0.0', port=PORT)
-    
-    else:
-        # وضع Long Polling (للتطوير فقط)
-        print("🔄 تشغيل Long Polling...")
-        bot.infinity_polling()
+# Run once on import (critical for Render + gunicorn)
+setup_webhook()
 
-if __name__ == '__main__':
-    main()
-else:
-    # على Render: ضبط Webhook
-    setup_webhook()
+# ────────────────────────────────────────────────
+#               Local Development Only
+# ────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logger.info("Running in local development mode")
+    bot.remove_webhook()
+    app.run(host="0.0.0.0", port=PORT, debug=True)
