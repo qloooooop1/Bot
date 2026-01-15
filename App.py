@@ -885,19 +885,6 @@ def delete_service_messages(message: types.Message):
         # Fail silently as service message deletion is non-critical
         logger.debug(f"Could not delete service message in {chat_id}: {e}")
 
-def cmd_settings_markup():
-    """
-    Generate the settings inline keyboard markup.
-    
-    Returns:
-        types.InlineKeyboardMarkup: Keyboard with settings buttons
-    """
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="settings_panel")
-    )
-    return markup
-
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
