@@ -1424,8 +1424,9 @@ def send_diverse_azkar(chat_id: int):
         
         # Try to send with media if any media type is enabled
         sent = False
-        if allowed_media_types and random.random() < 0.7:  # 70% chance to send with media if enabled
+        if allowed_media_types:
             # Try to send with random allowed media type
+            # Note: Could make this probability configurable in future if needed
             media_type = random.choice(allowed_media_types)
             logger.info(f"Attempting to send diverse azkar with media type: {media_type}")
             sent = send_media_with_caption(chat_id, msg, media_type)
@@ -1941,6 +1942,8 @@ def schedule_chat_jobs(chat_id: int):
                     logger.info(f"Removed existing diverse azkar job for chat {chat_id}")
             
             # Add new job
+            # Note: next_run_time set to now means the job runs once immediately,
+            # then continues on the interval schedule. This helps test that diverse azkar is working.
             job = scheduler.add_job(
                 send_diverse_azkar,
                 'interval',
@@ -1948,7 +1951,7 @@ def schedule_chat_jobs(chat_id: int):
                 args=[chat_id],
                 id=f"diverse_azkar_{chat_id}",
                 replace_existing=True,
-                next_run_time=datetime.now(TIMEZONE)  # Run immediately on first schedule
+                next_run_time=datetime.now(TIMEZONE)  # Run once immediately, then on interval
             )
             logger.info(f"✓ Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}, next run: {job.next_run_time}")
         else:
@@ -3051,12 +3054,12 @@ def callback_set_sleep_time(call: types.CallbackQuery):
     try:
         # Parse callback data: set_sleep_time_HHMM_chat_id
         parts = call.data.split("_")
-        if len(parts) < 4:
+        if len(parts) < 5:
             bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
             return
         
         time_str = parts[3]  # e.g., "2100"
-        chat_id = int(parts[4])
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
         
         # Convert time string to HH:MM format
         time_formatted = f"{time_str[:2]}:{time_str[2:]}"
@@ -3371,12 +3374,12 @@ def callback_set_morning_time(call: types.CallbackQuery):
     try:
         # Parse callback data: set_morning_time_HHMM_chat_id
         parts = call.data.split("_")
-        if len(parts) < 4:
+        if len(parts) < 5:
             bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
             return
         
         time_str = parts[3]  # e.g., "0430"
-        chat_id = int(parts[4])
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
         
         # Convert time string to HH:MM format
         time_formatted = f"{time_str[:2]}:{time_str[2:]}"
@@ -3409,12 +3412,12 @@ def callback_set_evening_time(call: types.CallbackQuery):
     try:
         # Parse callback data: set_evening_time_HHMM_chat_id
         parts = call.data.split("_")
-        if len(parts) < 4:
+        if len(parts) < 5:
             bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
             return
         
         time_str = parts[3]  # e.g., "1530"
-        chat_id = int(parts[4])
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
         
         # Convert time string to HH:MM format
         time_formatted = f"{time_str[:2]}:{time_str[2:]}"
