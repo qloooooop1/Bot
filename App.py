@@ -604,7 +604,7 @@ def cmd_settings_markup():
     return markup
 
 @bot.message_handler(commands=["start"])
-def cmd_start(message):
+def cmd_start(message: types.Message):
     """
     Handle /start command in both private chats and groups.
     Updated to show different interfaces based on chat type and admin status.
@@ -612,9 +612,12 @@ def cmd_start(message):
     try:
         logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
         
+        # Cache bot info to avoid redundant API calls
+        bot_info = bot.get_me()
+        
         # إذا كانت الرسالة واردة داخل محادثة خاصة
         if message.chat.type == "private":
-            bot_username = bot.get_me().username or "نور الذكر"
+            bot_username = bot_info.username or "نور الذكر"
             description = "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(
@@ -632,7 +635,7 @@ def cmd_start(message):
         
         # إذا كانت الرسالة واردة داخل مجموعة أو مجموعة سوبر
         else:
-            bot_status = bot.get_chat_member(chat_id=message.chat.id, user_id=bot.get_me().id).status
+            bot_status = bot.get_chat_member(chat_id=message.chat.id, user_id=bot_info.id).status
             if bot_status in ["administrator", "creator"]:
                 bot.send_message(
                     message.chat.id,
