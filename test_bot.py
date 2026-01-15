@@ -4,13 +4,9 @@ These tests verify core functions without requiring a live bot connection.
 """
 
 import os
-import sys
 import json
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
-
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
 
 
 class TestAzkarLoading(unittest.TestCase):

@@ -36,8 +36,17 @@ def check_json_files():
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 print(f"  ✓ {filename}: {data.get('title', 'No title')}")
+        except FileNotFoundError:
+            print(f"  ✗ File not found: {filename}")
+            all_valid = False
+        except json.JSONDecodeError as e:
+            print(f"  ✗ Invalid JSON in {filename}: {e}")
+            all_valid = False
+        except UnicodeDecodeError as e:
+            print(f"  ✗ Encoding error in {filename}: {e}")
+            all_valid = False
         except Exception as e:
-            print(f"  ✗ Error loading {filename}: {e}")
+            print(f"  ✗ Unexpected error loading {filename}: {e}")
             all_valid = False
     
     return all_valid

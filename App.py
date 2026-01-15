@@ -597,8 +597,12 @@ def cmd_start(message: types.Message):
             # Get bot username safely
             try:
                 bot_username = bot.get_me().username
-            except (telebot.apihelper.ApiException, Exception) as e:
-                logger.error(f"Failed to get bot username: {e}")
+            except telebot.apihelper.ApiException as e:
+                logger.error(f"Failed to get bot username from Telegram: {e}")
+                bot_username = "NourAdhkarBot"  # Fallback
+            except Exception as e:
+                # Catch any other unexpected errors
+                logger.error(f"Unexpected error getting bot username: {e}")
                 bot_username = "NourAdhkarBot"  # Fallback
             
             markup.add(
