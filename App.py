@@ -1385,35 +1385,63 @@ def get_random_media_by_category(category: str, media_type: str = "all"):
 
 def send_diverse_azkar(chat_id: int):
     """
-    Send a random diverse azkar to a chat.
+    Send a random diverse azkar to a chat with media format preferences.
     
     Args:
         chat_id (int): Chat ID to send to
     """
     try:
+        logger.info(f"send_diverse_azkar called for chat {chat_id}")
         settings = get_diverse_azkar_settings(chat_id)
         
         if not settings["enabled"]:
+            logger.info(f"Diverse azkar disabled for chat {chat_id}")
             return
+        
+        logger.info(f"Diverse azkar enabled for chat {chat_id}, preparing to send")
         
         msg = get_random_diverse_azkar()
         if not msg:
             logger.warning(f"No diverse azkar available for chat {chat_id}")
             return
         
-        # Check if media should be sent
-        media_type = settings.get("media_type", "text")
+        # Check media format preferences
+        enable_audio = settings.get("enable_audio", True)
+        enable_images = settings.get("enable_images", True)
+        enable_pdf = settings.get("enable_pdf", True)
+        enable_text = settings.get("enable_text", True)
         
-        if media_type != "text":
-            # Try to send with media
-            send_media_with_caption(chat_id, msg, media_type)
-        else:
-            # Send text only
+        logger.info(f"Media preferences for chat {chat_id}: audio={enable_audio}, images={enable_images}, pdf={enable_pdf}, text={enable_text}")
+        
+        # Build list of allowed media types
+        allowed_media_types = []
+        if enable_audio:
+            allowed_media_types.append("audio")
+        if enable_images:
+            allowed_media_types.append("images")
+        if enable_pdf:
+            allowed_media_types.append("documents")  # PDF files are documents
+        
+        # Try to send with media if any media type is enabled
+        sent = False
+        if allowed_media_types and random.random() < 0.7:  # 70% chance to send with media if enabled
+            # Try to send with random allowed media type
+            media_type = random.choice(allowed_media_types)
+            logger.info(f"Attempting to send diverse azkar with media type: {media_type}")
+            sent = send_media_with_caption(chat_id, msg, media_type)
+        
+        # Fallback to text if media failed or text is preferred
+        if not sent and enable_text:
+            logger.info(f"Sending diverse azkar as text to chat {chat_id}")
             bot.send_message(chat_id, msg, parse_mode="Markdown")
+            sent = True
         
-        # Update last sent timestamp
-        update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
-        logger.info(f"Sent diverse azkar to chat {chat_id}")
+        if sent:
+            # Update last sent timestamp
+            update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
+            logger.info(f"Successfully sent diverse azkar to chat {chat_id}")
+        else:
+            logger.warning(f"Failed to send diverse azkar to chat {chat_id} - all media types disabled")
         
     except Exception as e:
         logger.error(f"Error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
@@ -1903,16 +1931,28 @@ def schedule_chat_jobs(chat_id: int):
         
         # Diverse Azkar (interval-based)
         diverse_settings = get_diverse_azkar_settings(chat_id)
+        logger.info(f"Diverse azkar settings for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
+        
         if diverse_settings["enabled"] and diverse_settings["interval_minutes"] > 0:
-            scheduler.add_job(
+            # Remove any existing diverse azkar job first
+            for job in scheduler.get_jobs():
+                if job.id == f"diverse_azkar_{chat_id}":
+                    job.remove()
+                    logger.info(f"Removed existing diverse azkar job for chat {chat_id}")
+            
+            # Add new job
+            job = scheduler.add_job(
                 send_diverse_azkar,
                 'interval',
                 minutes=diverse_settings["interval_minutes"],
                 args=[chat_id],
                 id=f"diverse_azkar_{chat_id}",
-                replace_existing=True
+                replace_existing=True,
+                next_run_time=datetime.now(TIMEZONE)  # Run immediately on first schedule
             )
-            logger.info(f"Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}")
+            logger.info(f"✓ Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}, next run: {job.next_run_time}")
+        else:
+            logger.info(f"Diverse azkar not scheduled for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
         
         # Fasting Reminders
         fasting_settings = get_fasting_reminders_settings(chat_id)
