@@ -2294,8 +2294,13 @@ def cmd_settings(message: types.Message):
         logger.error(f"Error in cmd_settings: {e}", exc_info=True)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_") and not any(char.isdigit() for char in call.data.split("_")[-1]))
 def callback_toggle(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for settings when used directly in group chats.
+    This handler only processes simple toggle commands without chat_id suffix.
+    Toggle commands with chat_id are handled by specific handlers.
+    """
     if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
         bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
         return
