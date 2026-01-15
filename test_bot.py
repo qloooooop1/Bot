@@ -30,6 +30,21 @@ class TestWebhookSetup(unittest.TestCase):
         """Test that webhook verification interval is reasonable"""
         interval_minutes = 30
         self.assertTrue(5 <= interval_minutes <= 60, "Verification interval should be between 5 and 60 minutes")
+    
+    def test_delete_webhook_used_in_setup(self):
+        """Test that setup_webhook uses delete_webhook instead of remove_webhook for drop_pending_updates support"""
+        # Read the App.py file and check that delete_webhook is used in setup_webhook function
+        app_file = os.path.join(os.path.dirname(__file__), 'App.py')
+        with open(app_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        # Check that delete_webhook with drop_pending_updates is present in setup_webhook function
+        self.assertIn('bot.delete_webhook(drop_pending_updates=True)', content,
+                     "setup_webhook should use delete_webhook with drop_pending_updates")
+        
+        # Ensure the problematic remove_webhook call with drop_pending_updates is not present
+        self.assertNotIn('bot.remove_webhook(drop_pending_updates=True)', content,
+                        "setup_webhook should not use remove_webhook with drop_pending_updates")
 
 
 class TestAzkarLoading(unittest.TestCase):
