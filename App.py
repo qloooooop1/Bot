@@ -702,12 +702,12 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
             "arafah_reminder_enabled": bool(row[2]),
             "reminder_time": row[3]
         }
+        conn.close()
         return result
     except Exception as e:
         logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
-        raise
-    finally:
         conn.close()
+        raise
 
 def update_fasting_reminder_setting(chat_id: int, key: str, value):
     """Update a specific fasting reminder setting."""
