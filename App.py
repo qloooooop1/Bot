@@ -237,7 +237,16 @@ def update_chat_setting(chat_id: int, key: str, value):
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (int(value), chat_id))
+    
+    # Convert value to appropriate type based on key
+    if key in ["morning_time", "evening_time", "sleep_time", "media_type"]:
+        # String values - no conversion needed
+        final_value = value
+    else:
+        # Boolean/integer values - convert to int
+        final_value = int(value)
+    
+    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
     conn.commit()
     conn.close()
     logger.info(f"Updated {key} = {value} for chat {chat_id}")
@@ -408,13 +417,13 @@ def get_random_media(media_type: str = "all"):
                 media_items.extend([
                     {**item, "category_type": category}
                     for item in db["media"].get(category, [])
-                    if item.get("enabled", True) and item.get("file_id")
+                    if item.get("enabled", True) and item.get("file_id") and item.get("file_id").strip()
                 ])
         else:
             media_items = [
                 {**item, "category_type": media_type}
                 for item in db["media"].get(media_type, [])
-                if item.get("enabled", True) and item.get("file_id")
+                if item.get("enabled", True) and item.get("file_id") and item.get("file_id").strip()
             ]
         
         if not media_items:
