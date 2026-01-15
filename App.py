@@ -10,7 +10,10 @@ from apscheduler.triggers.cron import CronTrigger
 import pytz
 
 # توكن البوت الخاص بك
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required. Please set it before running the bot.")
+    
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
@@ -266,63 +269,66 @@ def schedule_azkar_jobs():
     for chat_id in chats:
         settings = get_chat_settings(chat_id)
         
-        # أذكار الصباح
-        if settings['morning_azkar']:
-            hour, minute = settings['morning_time'].split(':')
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(hour=int(hour), minute=int(minute)),
-                args=[chat_id, 'morning'],
-                id=f'morning_{chat_id}'
-            )
-        
-        # أذكار المساء
-        if settings['evening_azkar']:
-            hour, minute = settings['evening_time'].split(':')
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(hour=int(hour), minute=int(minute)),
-                args=[chat_id, 'evening'],
-                id=f'evening_{chat_id}'
-            )
-        
-        # رسالة قبل النوم
-        if settings['sleep_image']:
-            hour, minute = settings['sleep_time'].split(':')
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(hour=int(hour), minute=int(minute)),
-                args=[chat_id, 'sleep'],
-                id=f'sleep_{chat_id}'
-            )
-        
-        # سورة الكهف (الخميس قبل صلاة الجمعة بساعة - 11 صباحاً)
-        if settings['friday_sura']:
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(day_of_week='thu', hour=11, minute=0),
-                args=[chat_id, 'friday_kahf'],
-                id=f'kahf_{chat_id}'
-            )
-        
-        # أدعية الجمعة (الساعة 10 صباحاً يوم الجمعة)
-        if settings['friday_dua']:
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(day_of_week='fri', hour=10, minute=0),
-                args=[chat_id, 'friday_dua'],
-                id=f'friday_dua_{chat_id}'
-            )
-        
-        # محتوى عشوائي
-        if settings['random_content'] and settings['content_interval'] > 0:
-            scheduler.add_job(
-                send_random_content,
-                'interval',
-                minutes=settings['content_interval'],
-                args=[chat_id],
-                id=f'random_{chat_id}'
-            )
+        try:
+            # أذكار الصباح
+            if settings['morning_azkar']:
+                hour, minute = settings['morning_time'].split(':')
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=int(hour), minute=int(minute)),
+                    args=[chat_id, 'morning'],
+                    id=f'morning_{chat_id}'
+                )
+            
+            # أذكار المساء
+            if settings['evening_azkar']:
+                hour, minute = settings['evening_time'].split(':')
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=int(hour), minute=int(minute)),
+                    args=[chat_id, 'evening'],
+                    id=f'evening_{chat_id}'
+                )
+            
+            # رسالة قبل النوم
+            if settings['sleep_image']:
+                hour, minute = settings['sleep_time'].split(':')
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=int(hour), minute=int(minute)),
+                    args=[chat_id, 'sleep'],
+                    id=f'sleep_{chat_id}'
+                )
+            
+            # سورة الكهف (الخميس قبل صلاة الجمعة بساعة - 11 صباحاً)
+            if settings['friday_sura']:
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(day_of_week='thu', hour=11, minute=0),
+                    args=[chat_id, 'friday_kahf'],
+                    id=f'kahf_{chat_id}'
+                )
+            
+            # أدعية الجمعة (الساعة 10 صباحاً يوم الجمعة)
+            if settings['friday_dua']:
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(day_of_week='fri', hour=10, minute=0),
+                    args=[chat_id, 'friday_dua'],
+                    id=f'friday_dua_{chat_id}'
+                )
+            
+            # محتوى عشوائي
+            if settings['random_content'] and settings['content_interval'] > 0:
+                scheduler.add_job(
+                    send_random_content,
+                    'interval',
+                    minutes=settings['content_interval'],
+                    args=[chat_id],
+                    id=f'random_{chat_id}'
+                )
+        except (ValueError, KeyError) as e:
+            print(f"خطأ في جدولة المهام للمجموعة {chat_id}: {e}")
 
 # معالجات الأوامر
 @bot.message_handler(commands=['start', 'help'])
@@ -515,7 +521,9 @@ def callback_handler(call):
     
     if call.data in toggles:
         field = toggles[call.data]
-        cursor.execute(f'UPDATE chat_settings SET {field} = 1 - {field} WHERE chat_id = ?', (chat_id,))
+        # استخدام parameterized query بشكل آمن
+        query = f'UPDATE chat_settings SET {field} = 1 - {field} WHERE chat_id = ?'
+        cursor.execute(query, (chat_id,))
         conn.commit()
         bot.answer_callback_query(call.id, "✅ تم التحديث")
         
@@ -547,14 +555,18 @@ def set_time(message):
     try:
         parts = message.text.split()
         if len(parts) != 3:
-            raise ValueError()
+            raise ValueError("عدد المعاملات غير صحيح")
         
         time_type = parts[1]
         time_value = parts[2]
         
         # التحقق من صحة الوقت
-        datetime.strptime(time_value, '%H:%M')
+        try:
+            datetime.strptime(time_value, '%H:%M')
+        except ValueError:
+            raise ValueError("صيغة الوقت غير صحيحة. استخدم HH:MM")
         
+        # قائمة بيضاء للأنواع المسموحة
         valid_types = {
             'morning': 'morning_time',
             'evening': 'evening_time',
@@ -562,7 +574,7 @@ def set_time(message):
         }
         
         if time_type not in valid_types:
-            raise ValueError()
+            raise ValueError("نوع غير صحيح. استخدم: morning, evening, sleep")
         
         field = valid_types[time_type]
         cursor.execute(f'UPDATE chat_settings SET {field} = ? WHERE chat_id = ?', (time_value, message.chat.id))
@@ -572,8 +584,11 @@ def set_time(message):
         
         bot.reply_to(message, f"✅ تم تحديث وقت {time_type} إلى {time_value}")
         
-    except:
-        bot.reply_to(message, "❌ صيغة خاطئة\n\nالاستخدام: /settime <morning/evening/sleep> <HH:MM>\nمثال: /settime morning 06:00")
+    except ValueError as e:
+        bot.reply_to(message, f"❌ {str(e)}\n\nالاستخدام: /settime <morning/evening/sleep> <HH:MM>\nمثال: /settime morning 06:00")
+    except Exception as e:
+        print(f"خطأ في settime: {e}")
+        bot.reply_to(message, "❌ حدث خطأ أثناء تحديث الوقت")
 
 @bot.message_handler(commands=['setinterval'])
 def set_interval(message):
