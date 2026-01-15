@@ -586,7 +586,10 @@ def cmd_disable(message: types.Message):
             job.remove()
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
     logger.info(f"Bot disabled in {message.chat.id}")
-
+    @bot.message_handler(commands=['start'])
+def cmd_start(message):
+    bot.reply_to(message, "مرحبا! البوت شغال الآن 🚀\nأرسل /help للمساعدة")
+    logger.info(f"/start received from {message.from_user.id} in chat {message.chat.id}")
 # ────────────────────────────────────────────────
 #               Flask Routes
 # ────────────────────────────────────────────────
