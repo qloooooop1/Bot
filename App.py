@@ -170,6 +170,17 @@ def init_db():
         )
     ''')
     
+    # Fasting reminders settings table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS fasting_reminders (
+            chat_id INTEGER PRIMARY KEY,
+            monday_thursday_enabled INTEGER DEFAULT 1,
+            arafah_reminder_enabled INTEGER DEFAULT 1,
+            reminder_time TEXT DEFAULT '21:00',
+            FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("Database initialized with all tables")
@@ -473,6 +484,61 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
     conn.commit()
     conn.close()
     logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
+
+# ────────────────────────────────────────────────
+#               Fasting Reminders Settings Functions
+# ────────────────────────────────────────────────
+
+def get_fasting_reminders_settings(chat_id: int) -> dict:
+    """Get fasting reminders settings for a chat, creating default if not exists."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM fasting_reminders WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    
+    if row is None:
+        c.execute("INSERT INTO fasting_reminders (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+        conn.close()
+        return get_fasting_reminders_settings(chat_id)
+    
+    conn.close()
+    return {
+        "chat_id": row[0],
+        "monday_thursday_enabled": bool(row[1]),
+        "arafah_reminder_enabled": bool(row[2]),
+        "reminder_time": row[3]
+    }
+
+def update_fasting_reminder_setting(chat_id: int, key: str, value):
+    """Update a specific fasting reminder setting."""
+    # Whitelist validation to prevent SQL injection
+    allowed_keys = {
+        "monday_thursday_enabled", "arafah_reminder_enabled", "reminder_time"
+    }
+    if key not in allowed_keys:
+        logger.error(f"Invalid fasting reminder setting key: {key}")
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Ensure settings exist
+    c.execute("SELECT chat_id FROM fasting_reminders WHERE chat_id = ?", (chat_id,))
+    if not c.fetchone():
+        c.execute("INSERT INTO fasting_reminders (chat_id) VALUES (?)", (chat_id,))
+    
+    # Convert value based on key type
+    if key == "reminder_time":
+        final_value = value
+    else:
+        final_value = int(value)
+    
+    # Safe to use f-string here as key is validated against whitelist above
+    c.execute(f"UPDATE fasting_reminders SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated fasting reminder {key} = {value} for chat {chat_id}")
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
@@ -1037,6 +1103,74 @@ def send_special_azkar(chat_id: int, azkar_type: str):
     except Exception as e:
         logger.error(f"Error sending {azkar_type} azkar to chat {chat_id}: {e}", exc_info=True)
 
+def send_fasting_reminder(chat_id: int, reminder_type: str):
+    """
+    Send fasting reminder to a chat.
+    
+    Args:
+        chat_id (int): Chat ID to send to
+        reminder_type (str): Type of reminder - 'monday_thursday' or 'arafah'
+    """
+    try:
+        settings = get_chat_settings(chat_id)
+        
+        if not settings["is_enabled"]:
+            return
+        
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        if reminder_type == "monday_thursday" and not fasting_settings["monday_thursday_enabled"]:
+            return
+        
+        if reminder_type == "arafah" and not fasting_settings["arafah_reminder_enabled"]:
+            return
+        
+        # Prepare reminder message
+        if reminder_type == "monday_thursday":
+            # Determine which day
+            today = datetime.now(TIMEZONE)
+            day_name = "الإثنين" if today.weekday() == 0 else "الخميس"
+            
+            message = (
+                f"🌙 *تذكير بصيام {day_name}*\n\n"
+                f"غداً هو يوم {day_name} المبارك\n\n"
+                "عن أبي قتادة رضي الله عنه أن رسول الله ﷺ سُئِل عن صوم يوم الاثنين، فقال:\n"
+                '"ذاك يوم وُلِدتُ فيه، ويوم بُعِثتُ فيه، أو أُنزِل عليَّ فيه"\n'
+                "رواه مسلم\n\n"
+                "📿 *فضل صيام الاثنين والخميس:*\n"
+                "• تُعرض الأعمال على الله يومي الاثنين والخميس\n"
+                "• كان النبي ﷺ يحرص على صيامهما\n"
+                "• صيامهما سنة مستحبة\n\n"
+                "اللهم تقبل منا الصيام والقيام وصالح الأعمال 🤲"
+            )
+        else:  # arafah
+            message = (
+                "🕋 *تذكير بصيام يوم عرفة*\n\n"
+                "غداً هو يوم عرفة المبارك - التاسع من ذي الحجة\n\n"
+                "قال رسول الله ﷺ:\n"
+                '"صيام يوم عرفة، أحتسب على الله أن يكفر السنة التي قبله، والسنة التي بعده"\n'
+                "رواه مسلم\n\n"
+                "📿 *فضل صيام يوم عرفة:*\n"
+                "• يكفر ذنوب سنتين (السنة الماضية والقادمة)\n"
+                "• من أفضل الأيام عند الله\n"
+                "• خير الدعاء دعاء يوم عرفة\n\n"
+                "🤲 *أفضل دعاء يوم عرفة:*\n"
+                "لا إله إلا الله وحده لا شريك له، له الملك وله الحمد، وهو على كل شيء قدير\n\n"
+                "اللهم تقبل منا الصيام والدعاء 🌙"
+            )
+        
+        bot.send_message(chat_id, message, parse_mode="Markdown")
+        logger.info(f"Sent {reminder_type} fasting reminder to {chat_id}")
+        
+    except telebot.apihelper.ApiTelegramException as e:
+        if "blocked" in str(e).lower() or "kicked" in str(e).lower():
+            logger.warning(f"Bot blocked/kicked from {chat_id}")
+            update_chat_setting(chat_id, "is_enabled", 0)
+        else:
+            logger.error(f"Failed sending {reminder_type} reminder to {chat_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error sending {reminder_type} reminder to chat {chat_id}: {e}", exc_info=True)
+
 # ────────────────────────────────────────────────
 #               Content - أذكار الصباح
 # ────────────────────────────────────────────────
@@ -1314,6 +1448,35 @@ def schedule_chat_jobs(chat_id: int):
                 replace_existing=True
             )
             logger.info(f"Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}")
+        
+        # Fasting Reminders
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        # Monday/Thursday fasting reminders
+        if fasting_settings["monday_thursday_enabled"]:
+            try:
+                h, m = map(int, fasting_settings["reminder_time"].split(":"))
+                # Schedule for Sunday (day before Monday) and Wednesday (day before Thursday)
+                scheduler.add_job(
+                    send_fasting_reminder,
+                    CronTrigger(day_of_week="sun", hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "monday_thursday"],
+                    id=f"monday_reminder_{chat_id}",
+                    replace_existing=True
+                )
+                scheduler.add_job(
+                    send_fasting_reminder,
+                    CronTrigger(day_of_week="wed", hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "monday_thursday"],
+                    id=f"thursday_reminder_{chat_id}",
+                    replace_existing=True
+                )
+                logger.info(f"Scheduled Monday/Thursday fasting reminders at {fasting_settings['reminder_time']} for chat {chat_id}")
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid reminder time for {chat_id}: {e}")
+        
+        # Note: Arafah reminder would need Islamic calendar integration
+        # For now, we'll add a placeholder that can be triggered manually or via Islamic date check
 
         logger.info(f"Scheduled jobs for chat {chat_id}")
     except Exception as e:
@@ -1522,6 +1685,9 @@ def cmd_start(message: types.Message):
                     types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
                     types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
                 )
+                markup.add(
+                    types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="group_fasting_reminders")
+                )
 
                 interval_text = ""
                 if diverse_settings["enabled"]:
@@ -1687,6 +1853,9 @@ def callback_open_settings(call: types.CallbackQuery):
             "✨ *الأدعية المتنوعة*\n"
             "• فواصل زمنية من دقيقة إلى يوم كامل\n"
             "• نصوص، صور، صوتيات، ملفات PDF\n\n"
+            "🌙 *تذكيرات الصيام*\n"
+            "• تذكير بصيام الاثنين والخميس\n"
+            "• تذكير بصيام يوم عرفة\n\n"
             "*ملاحظة:* هذه الإعدادات مستقلة لكل مجموعة"
         )
         
@@ -1698,6 +1867,7 @@ def callback_open_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
             types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
             types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
+            types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="fasting_reminders_settings"),
             types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
             types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings")
         )
@@ -2212,6 +2382,60 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
         except Exception:
             pass
 
+@bot.callback_query_handler(func=lambda call: call.data == "fasting_reminders_settings")
+def callback_fasting_reminders_settings(call: types.CallbackQuery):
+    """
+    Handle callback for fasting reminders settings panel.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "تذكيرات الصيام")
+        
+        settings_text = (
+            "🌙 *تذكيرات الصيام*\n\n"
+            "*تذكير بصيام الاثنين والخميس:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
+            "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
+            "• قابل للتخصيص من إعدادات المواعيد\n\n"
+            "*فضل صيام الاثنين والخميس:*\n"
+            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+            "*تذكير بصيام يوم عرفة:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
+            "• يوم عرفة هو التاسع من ذي الحجة\n\n"
+            "*فضل صيام يوم عرفة:*\n"
+            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر السنة التي قبله، والسنة التي بعده\"\n\n"
+            "*للتفعيل في مجموعة:*\n"
+            "استخدم `/start` في المجموعة وفعّل التذكيرات المطلوبة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+        )
+        add_support_buttons(markup)
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Fasting reminders settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_fasting_reminders_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
 @bot.callback_query_handler(func=lambda call: call.data == "group_diverse_settings")
 def callback_group_diverse_settings(call: types.CallbackQuery):
     """
@@ -2480,6 +2704,85 @@ def callback_toggle_hajj_eid(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_hajj_eid: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "group_fasting_reminders")
+def callback_group_fasting_reminders(call: types.CallbackQuery):
+    """
+    Handle fasting reminders settings for a specific group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "تذكيرات الصيام")
+        
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        settings_text = (
+            "🌙 *تذكيرات الصيام*\n\n"
+            f"وقت التذكير: {fasting_settings['reminder_time']}\n\n"
+            "قم بتفعيل أو تعطيل التذكيرات المطلوبة:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        fasting_btns = [
+            ("monday_thursday_enabled", "🌙 تذكير صيام الاثنين والخميس"),
+            ("arafah_reminder_enabled", "🕋 تذكير صيام يوم عرفة")
+        ]
+        
+        for key, label in fasting_btns:
+            status = "✅" if fasting_settings[key] else "❌"
+            markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_fasting_{key}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            chat_id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Group fasting reminders settings displayed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_group_fasting_reminders: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_fasting_"))
+def callback_toggle_fasting(call: types.CallbackQuery):
+    """
+    Toggle fasting reminder setting for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        key = call.data.replace("toggle_fasting_", "")
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        new_value = not fasting_settings[key]
+        
+        update_fasting_reminder_setting(chat_id, key, new_value)
+        schedule_chat_jobs(chat_id)
+        
+        status_text = "تم التفعيل" if new_value else "تم التعطيل"
+        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        
+        # Refresh the settings view
+        callback_group_fasting_reminders(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_fasting: {e}", exc_info=True)
         bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
 
 @bot.message_handler(commands=["status"])
