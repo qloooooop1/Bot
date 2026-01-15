@@ -2160,28 +2160,79 @@ def cmd_start(message: types.Message):
             is_admin = is_user_admin_in_any_group(message.from_user.id)
             
             if is_admin:
-                # Welcome message for admin
-                welcome_text = (
-                    f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
-                    f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
-                    f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
-                    f"*أنت مشرف مثبت* ✅\n"
-                    f"يمكنك الآن الوصول إلى لوحة التحكم المتقدمة"
-                )
+                # Get all groups where this user is an admin and show settings directly
+                conn, c, is_postgres = get_db_connection()
                 
-                # Advanced control panel markup
-                markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(
-                    types.InlineKeyboardButton("⚙️ لوحة التحكم المتقدمة", callback_data="open_settings")
-                )
+                try:
+                    placeholder = "%s" if is_postgres else "?"
+                    c.execute(f'''
+                        SELECT DISTINCT chat_id FROM admins 
+                        WHERE user_id = {placeholder}
+                    ''', (message.from_user.id,))
+                    
+                    user_groups = [row[0] for row in c.fetchall()]
+                finally:
+                    conn.close()
                 
-                bot.send_message(
-                    message.chat.id,
-                    welcome_text,
-                    reply_markup=markup,
-                    parse_mode="Markdown"
-                )
-                logger.info(f"/start in private chat from admin user {message.from_user.id}")
+                if not user_groups:
+                    # No groups found - show welcome with guidance
+                    welcome_text = (
+                        f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                        f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                        f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
+                        f"⚠️ *للبدء:*\n"
+                        f"يرجى استخدام /start في إحدى المجموعات أولاً"
+                    )
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=1)
+                    markup.add(
+                        types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
+                        types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+                        types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
+                    )
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        welcome_text,
+                        reply_markup=markup,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    # Show control panel directly - group selection
+                    settings_text = (
+                        "⚙️ *لوحة التحكم المتقدمة*\n\n"
+                        "*اختر المجموعة التي تريد إدارتها:*\n\n"
+                    )
+                    
+                    # Create keyboard with group buttons
+                    markup = types.InlineKeyboardMarkup(row_width=1)
+                    
+                    for chat_id in user_groups:
+                        try:
+                            # Get chat title
+                            chat_info = bot.get_chat(chat_id)
+                            chat_title = chat_info.title or f"Group {chat_id}"
+                            
+                            # Encode chat_id for callback data
+                            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+                            
+                            markup.add(
+                                types.InlineKeyboardButton(
+                                    f"📱 {chat_title}",
+                                    callback_data=f"select_group_{chat_id_encoded}"
+                                )
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not get info for chat {chat_id}: {e}")
+                            continue
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        settings_text,
+                        parse_mode="Markdown",
+                        reply_markup=markup
+                    )
+                    logger.info(f"/start in private chat - showing control panel directly for admin {message.from_user.id} with {len(user_groups)} groups")
             else:
                 # Non-admin user - show guidance
                 welcome_text = (
@@ -2708,7 +2759,7 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("morning_time_presets"))
 def callback_morning_time_presets(call: types.CallbackQuery):
-    """Show preset times for morning azkar as information."""
+    """Show preset times for morning azkar with clickable time buttons."""
     try:
         # Extract chat_id from callback data if present
         chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
@@ -2725,34 +2776,55 @@ def callback_morning_time_presets(call: types.CallbackQuery):
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
                 return
+            # Show error if no chat_id
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
         
-        bot.answer_callback_query(call.id, "أوقات شائعة للصباح")
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        current_time = "05:00"
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            current_time = settings.get('morning_time', '05:00')
         
         settings_text = (
-            "⏰ *أوقات شائعة لأذكار الصباح*\n\n"
-            "*الأوقات المقترحة:*\n"
+            "⏰ *تخصيص وقت أذكار الصباح*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
             "• 04:30 - بعد صلاة الفجر مباشرة\n"
             "• 05:00 - الافتراضي\n"
             "• 06:00 - مع شروق الشمس تقريباً\n"
             "• 07:00 - صباحاً\n\n"
-            "*لتخصيص الوقت:*\n"
-            "استخدم الأمر في المجموعة:\n"
-            "`/settime morning HH:MM`\n\n"
-            "*مثال:*\n"
-            "`/settime morning 06:00`"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime morning HH:MM`"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         
-        # Add back button with chat_id if available
-        if chat_id:
+        # Add clickable time buttons
+        time_options = [
+            ("04:30", "04:30 🌄"),
+            ("05:00", "05:00 ⭐"),
+            ("06:00", "06:00 ☀️"),
+            ("07:00", "07:00 🌅")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
             markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_morning_time_{time_value.replace(':', '')}_{chat_id}"
+                )
             )
-        else:
-            markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
-            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+        )
         
         bot.edit_message_text(
             settings_text,
@@ -2771,7 +2843,7 @@ def callback_morning_time_presets(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("evening_time_presets"))
 def callback_evening_time_presets(call: types.CallbackQuery):
-    """Show preset times for evening azkar as information."""
+    """Show preset times for evening azkar with clickable time buttons."""
     try:
         # Extract chat_id from callback data if present
         chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
@@ -2788,34 +2860,55 @@ def callback_evening_time_presets(call: types.CallbackQuery):
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
                 return
+            # Show error if no chat_id
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
         
-        bot.answer_callback_query(call.id, "أوقات شائعة للمساء")
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        current_time = "18:00"
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            current_time = settings.get('evening_time', '18:00')
         
         settings_text = (
-            "🌙 *أوقات شائعة لأذكار المساء*\n\n"
-            "*الأوقات المقترحة:*\n"
+            "🌙 *تخصيص وقت أذكار المساء*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
             "• 15:30 - بعد صلاة العصر\n"
             "• 17:00 - قبل المغرب\n"
             "• 18:00 - الافتراضي\n"
             "• 19:00 - مساءً\n\n"
-            "*لتخصيص الوقت:*\n"
-            "استخدم الأمر في المجموعة:\n"
-            "`/settime evening HH:MM`\n\n"
-            "*مثال:*\n"
-            "`/settime evening 17:30`"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime evening HH:MM`"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         
-        # Add back button with chat_id if available
-        if chat_id:
+        # Add clickable time buttons
+        time_options = [
+            ("15:30", "15:30 🕌"),
+            ("17:00", "17:00 🌆"),
+            ("18:00", "18:00 ⭐"),
+            ("19:00", "19:00 🌙")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
             markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_evening_time_{time_value.replace(':', '')}_{chat_id}"
+                )
             )
-        else:
-            markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
-            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+        )
         
         bot.edit_message_text(
             settings_text,
@@ -2827,6 +2920,82 @@ def callback_evening_time_presets(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_evening_time_presets: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_morning_time_"))
+def callback_set_morning_time(call: types.CallbackQuery):
+    """Handle setting morning azkar time from preset buttons."""
+    try:
+        # Parse callback data: set_morning_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "0430"
+        chat_id = int(parts[4])
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "morning_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت الصباح: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"morning_time_presets_{chat_id}"
+        callback_morning_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_morning_time: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_evening_time_"))
+def callback_set_evening_time(call: types.CallbackQuery):
+    """Handle setting evening azkar time from preset buttons."""
+    try:
+        # Parse callback data: set_evening_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "1530"
+        chat_id = int(parts[4])
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "evening_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت المساء: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"evening_time_presets_{chat_id}"
+        callback_evening_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_evening_time: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
