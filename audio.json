@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "description": "قاعدة بيانات الملفات الصوتية المستخدمة مع الأذكار",
+  "note": "يجب ملء file_id بمعرف الملف الفعلي من تيليجرام",
+  "audio": [
+    {
+      "id": "audio_001",
+      "category": "حج",
+      "url": "",
+      "file_id": "",
+      "title": "تلبية الحج",
+      "description": "لبيك اللهم لبيك",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_002",
+      "category": "عيد",
+      "url": "",
+      "file_id": "",
+      "title": "تكبيرات العيد",
+      "description": "الله أكبر الله أكبر",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_003",
+      "category": "رمضان",
+      "url": "",
+      "file_id": "",
+      "title": "دعاء الإفطار",
+      "description": "اللهم لك صمت",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_004",
+      "category": "عرفة",
+      "url": "",
+      "file_id": "",
+      "title": "دعاء يوم عرفة",
+      "description": "خير الدعاء دعاء يوم عرفة",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_005",
+      "category": "ليلة القدر",
+      "url": "",
+      "file_id": "",
+      "title": "دعاء ليلة القدر",
+      "description": "اللهم إنك عفو تحب العفو",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_006",
+      "category": "أذكار",
+      "url": "",
+      "file_id": "",
+      "title": "أذكار الصباح",
+      "description": "أذكار الصباح كاملة",
+      "duration_seconds": 0,
+      "enabled": true
+    },
+    {
+      "id": "audio_007",
+      "category": "أذكار",
+      "url": "",
+      "file_id": "",
+      "title": "أذكار المساء",
+      "description": "أذكار المساء كاملة",
+      "duration_seconds": 0,
+      "enabled": true
+    }
+  ]
+}
