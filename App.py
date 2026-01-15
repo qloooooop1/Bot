@@ -66,7 +66,9 @@ logger.info(f"✓ Render hostname: {RENDER_HOSTNAME}")
 # ────────────────────────────────────────────────
 
 app = Flask(__name__)
-bot = telebot.TeleBot(BOT_TOKEN)
+# threaded=False prevents race conditions and handler issues with Gunicorn workers
+# This is critical for webhook mode with multiple workers
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 scheduler = BackgroundScheduler(timezone=TIMEZONE)
 scheduler.start()
 
@@ -595,6 +597,8 @@ def cmd_start(message: types.Message):
     Provides clear information and interactive buttons.
     """
     try:
+        logger.info(f"Start command received from {message.from_user.id}")
+        
         if message.chat.type == "private":
             # Create keyboard with three buttons for private chat
             markup = types.InlineKeyboardMarkup(row_width=1)
@@ -627,7 +631,8 @@ def cmd_start(message: types.Message):
                 "1. أضفني إلى مجموعتك\n"
                 "2. اجعلني مشرفاً\n"
                 "3. سأبدأ العمل تلقائياً!\n\n"
-                "⚙️ استخدم الأزرار أدناه للتواصل والإضافة"
+                "⚙️ استخدم الأزرار أدناه للتواصل والإضافة\n\n"
+                "🚀 *البوت شغال الآن!*"
             )
             
             bot.reply_to(
@@ -648,7 +653,8 @@ def cmd_start(message: types.Message):
             group_text = (
                 "✅ *تم التفعيل بنجاح!*\n\n"
                 "📿 البوت جاهز لإرسال الأذكار اليومية\n"
-                "⚙️ استخدم /settings لتخصيص الإعدادات (للمشرفين فقط)"
+                "⚙️ استخدم /settings لتخصيص الإعدادات (للمشرفين فقط)\n\n"
+                "🚀 *البوت شغال الآن!*"
             )
             
             bot.reply_to(
@@ -813,6 +819,22 @@ def cmd_disable(message: types.Message):
             job.remove()
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
     logger.info(f"Bot disabled in {message.chat.id}")
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message: types.Message):
+    """
+    Echo handler for testing purposes - responds to all non-command messages.
+    This helps verify that the bot is receiving and processing messages correctly.
+    """
+    try:
+        # Only respond in private chats to avoid spam in groups
+        if message.chat.type == "private":
+            response = f"قلت: {message.text}"
+            bot.reply_to(message, response)
+            logger.info(f"Echo handler triggered for message from {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"Error in echo handler: {e}", exc_info=True)
+
 # ────────────────────────────────────────────────
 #               Flask Routes
 # ────────────────────────────────────────────────
@@ -894,18 +916,26 @@ def telegram_webhook():
     """
     Handle incoming webhook updates from Telegram.
     Processes all incoming messages and updates with comprehensive error handling.
+    Enhanced with detailed logging for debugging webhook issues.
     """
-    if request.headers.get("content-type") == "application/json":
+    logger.info("Webhook called - new update received")
+    
+    if request.headers.get('content-type') == 'application/json':
         try:
-            json_string = request.get_data().decode("utf-8")
-            update = types.Update.de_json(json_string)
-            if update:
-                logger.debug(f"📨 Processing update: {update.update_id}")
-                bot.process_new_updates([update])
-                logger.debug(f"✓ Update {update.update_id} processed successfully")
-            else:
-                logger.warning("⚠️ Received empty update")
-            return "", 200
+            json_string = request.get_data(as_text=True)
+            logger.info(f"Received JSON: {json_string[:200]}...")
+            
+            update = telebot.types.Update.de_json(json_string)
+            
+            if update and update.message:
+                logger.info(f"Processing message: {update.message.text}")
+            elif update:
+                logger.info(f"Processing update type: {update.update_id}")
+            
+            bot.process_new_updates([update])
+            logger.info("Update processed successfully")
+            return '', 200
+            
         except UnicodeDecodeError as e:
             logger.error(f"❌ Webhook decode error: {e}")
             return "", 400
@@ -914,8 +944,8 @@ def telegram_webhook():
             # Return 200 to prevent Telegram from retrying indefinitely
             return "", 200
     else:
-        logger.warning(f"⚠️ Invalid content-type: {request.headers.get('content-type')}")
-        abort(403)
+        logger.warning("Invalid content-type")
+        return '', 403
 
 @app.route("/setwebhook", methods=["GET"])
 def manual_set_webhook():
