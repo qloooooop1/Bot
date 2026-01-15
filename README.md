@@ -42,12 +42,17 @@ cd Bot
 pip install -r requirements.txt
 ```
 
-3. تعديل توكن البوت في ملف `App.py`:
-```python
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+3. إعداد ملف البيئة:
+```bash
+cp .env.example .env
 ```
 
-4. تشغيل البوت:
+4. تعديل توكن البوت في ملف `.env`:
+```bash
+BOT_TOKEN=YOUR_ACTUAL_BOT_TOKEN_HERE
+```
+
+5. تشغيل البوت:
 ```bash
 python App.py
 ```

@@ -8,6 +8,9 @@ Test script for Islamic Adhkar Bot
 import sys
 import os
 
+# Set test bot token for testing (valid format but won't actually connect)
+os.environ['BOT_TOKEN'] = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz-1234567890'
+
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

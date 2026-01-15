@@ -21,10 +21,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 # توكن البوت - احصل عليه من @BotFather
 # Bot Token - Get it from @BotFather
-# ⚠️ IMPORTANT: Replace with your own bot token!
-BOT_TOKEN = '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk'  # استبدل هذا بتوكن البوت الخاص بك
+# ⚠️ IMPORTANT: Set BOT_TOKEN in .env file or environment variable!
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+
+if BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE':
+    logger.error("❌ Bot token not configured! Please set BOT_TOKEN environment variable or in .env file")
+    logger.error("   Get your token from @BotFather on Telegram")
+    exit(1)
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # المنطقة الزمنية (توقيت الرياض)

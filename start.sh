@@ -34,29 +34,25 @@ else
     echo "✓ جميع المتطلبات مثبتة / All requirements installed"
 fi
 
-# Check if .env file exists
+# Check if BOT_TOKEN is set
 if [ ! -f .env ]; then
-    if [ -f .env.example ]; then
-        echo ""
-        echo "⚠️  ملف .env غير موجود / .env file not found"
-        echo "   يرجى نسخ .env.example إلى .env وتعديل الإعدادات"
-        echo "   Please copy .env.example to .env and update settings"
-        echo ""
-        echo "   cp .env.example .env"
-        echo "   ثم عدل ملف .env بتوكن البوت الخاص بك"
-        echo ""
-    fi
-fi
-
-# Check if BOT_TOKEN is set in App.py
-if grep -q "YOUR_BOT_TOKEN_HERE" App.py 2>/dev/null; then
     echo ""
-    echo "⚠️  تحذير: لم يتم تعيين توكن البوت!"
-    echo "   Warning: Bot token not configured!"
+    echo "⚠️  ملف .env غير موجود / .env file not found"
+    echo "   يرجى نسخ .env.example إلى .env وتعديل الإعدادات"
+    echo "   Please copy .env.example to .env and update settings"
     echo ""
-    echo "   يرجى تعديل ملف App.py واستبدال:"
-    echo "   Please edit App.py and replace:"
-    echo "   BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'"
+    echo "   cp .env.example .env"
+    echo "   ثم عدل ملف .env بتوكن البوت الخاص بك"
+    echo "   Then edit .env file with your bot token"
+    echo ""
+elif grep -q "YOUR_BOT_TOKEN_HERE" .env 2>/dev/null; then
+    echo ""
+    echo "⚠️  تحذير: لم يتم تعيين توكن البوت في ملف .env!"
+    echo "   Warning: Bot token not configured in .env file!"
+    echo ""
+    echo "   يرجى تعديل ملف .env واستبدال:"
+    echo "   Please edit .env file and replace:"
+    echo "   BOT_TOKEN=YOUR_BOT_TOKEN_HERE"
     echo "   مع توكن البوت الخاص بك من @BotFather"
     echo "   with your bot token from @BotFather"
     echo ""

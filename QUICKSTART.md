@@ -18,11 +18,15 @@ pip install -r requirements.txt
 ```
 
 #### 3. إعداد التوكن
-افتح ملف `App.py` وابحث عن السطر:
-```python
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+انسخ ملف `.env.example` إلى `.env`:
+```bash
+cp .env.example .env
 ```
-استبدل `YOUR_BOT_TOKEN_HERE` بالتوكن الذي حصلت عليه من BotFather
+
+افتح ملف `.env` واستبدل `YOUR_BOT_TOKEN_HERE` بالتوكن الذي حصلت عليه من BotFather:
+```bash
+BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+```
 
 #### 4. تشغيل البوت
 ```bash
@@ -97,11 +101,15 @@ pip install -r requirements.txt
 ```
 
 #### 3. Configure Token
-Open `App.py` file and find the line:
-```python
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
 ```
-Replace `YOUR_BOT_TOKEN_HERE` with your bot token from BotFather
+
+Open `.env` file and replace `YOUR_BOT_TOKEN_HERE` with your bot token from BotFather:
+```bash
+BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+```
 
 #### 4. Run the Bot
 ```bash
