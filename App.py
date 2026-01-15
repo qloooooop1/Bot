@@ -14,6 +14,16 @@ from telebot import types
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+# PostgreSQL support
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
+    logger_temp = logging.getLogger(__name__)
+    logger_temp.warning("psycopg2 not available, PostgreSQL features disabled")
+
 # ────────────────────────────────────────────────
 #               Logging Setup
 # ────────────────────────────────────────────────
@@ -39,6 +49,13 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     logger.critical("BOT_TOKEN غير موجود في متغيرات البيئة")
     raise ValueError("BOT_TOKEN is required")
+
+# DATABASE_URL for PostgreSQL connection
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL:
+    logger.info(f"✓ DATABASE_URL configured for PostgreSQL")
+else:
+    logger.info("ℹ️ DATABASE_URL not set, PostgreSQL features disabled")
 
 # PORT configuration with proper validation
 PORT_ENV = os.environ.get("PORT")
@@ -101,6 +118,69 @@ def init_db():
     logger.info("Database initialized")
 
 init_db()
+
+# ────────────────────────────────────────────────
+#               Helper Functions
+# ────────────────────────────────────────────────
+
+def is_user_admin_in_any_group(user_id: int) -> bool:
+    """
+    Check if a user is an administrator in any group that has the bot.
+    
+    Args:
+        user_id (int): The Telegram user ID to check
+        
+    Returns:
+        bool: True if user is admin/creator in any group, False otherwise
+        
+    This function:
+    - Connects to PostgreSQL database if DATABASE_URL is available, falls back to SQLite
+    - Retrieves all group chat_ids (chat_id < 0) from chat_settings table
+    - Checks if the user is an admin or creator in any of those groups
+    - Uses try-except to handle errors gracefully
+    """
+    try:
+        chat_ids = []
+        
+        # Try PostgreSQL first if available
+        if DATABASE_URL and POSTGRES_AVAILABLE:
+            try:
+                with psycopg2.connect(DATABASE_URL) as conn:
+                    with conn.cursor() as cursor:
+                        # Get all group chat_ids (negative IDs indicate groups)
+                        cursor.execute("SELECT chat_id FROM chat_settings WHERE chat_id < 0")
+                        chat_ids = [row[0] for row in cursor.fetchall()]
+                        logger.debug(f"Retrieved {len(chat_ids)} group chat_ids from PostgreSQL")
+            except Exception as e:
+                logger.warning(f"PostgreSQL query failed, falling back to SQLite: {e}")
+                # Fall through to SQLite fallback
+        
+        # Fallback to SQLite if PostgreSQL not available or failed
+        if not chat_ids:
+            with sqlite3.connect(DB_FILE) as conn:
+                c = conn.cursor()
+                c.execute("SELECT chat_id FROM chat_settings WHERE chat_id < 0")
+                chat_ids = [row[0] for row in c.fetchall()]
+            logger.debug(f"Retrieved {len(chat_ids)} group chat_ids from SQLite")
+        
+        # Check admin status in each group
+        for chat_id in chat_ids:
+            try:
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ["administrator", "creator"]:
+                    logger.info(f"User {user_id} is admin in group {chat_id}")
+                    return True
+            except Exception as e:
+                # User might not be in this group, or bot might have been removed
+                logger.debug(f"Could not check admin status for user {user_id} in chat {chat_id}: {e}")
+                continue
+        
+        logger.debug(f"User {user_id} is not an admin in any group")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error in is_user_admin_in_any_group: {e}", exc_info=True)
+        return False
 
 def get_chat_settings(chat_id: int) -> dict:
     conn = sqlite3.connect(DB_FILE)
@@ -608,65 +688,115 @@ def cmd_start(message: types.Message):
     """
     Handle /start command in both private chats and groups.
     Updated to show different interfaces based on chat type and admin status.
+    
+    Scenarios:
+    1. Private Chat - User is admin in any group: Show welcome + settings panel + buttons
+    2. Private Chat - User is not admin: Show welcome + buttons only
+    3. Group Chat - Bot is admin: Activate bot + send settings to user's private chat
+    4. Group Chat - Bot is not admin: Request admin permissions
     """
     try:
         logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
         
         # Cache bot info to avoid redundant API calls
         bot_info = bot.get_me()
+        bot_username = bot_info.username or "NourAdhkarBot"
         
-        # إذا كانت الرسالة واردة داخل محادثة خاصة
+        # ──────────────────────────────────────────────────────────────
+        # Scenario 1 & 2: Private Chat
+        # ──────────────────────────────────────────────────────────────
         if message.chat.type == "private":
-            bot_username = bot_info.username or "نور الذكر"
-            description = "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
+            # Welcome message
+            welcome_text = (
+                f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
+            )
+            
+            # Action buttons
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(
                 types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
                 types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
                 types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
             )
+            
+            # Send welcome message
             bot.send_message(
                 message.chat.id,
-                f"مرحبًا بك في {bot_username} ✨\n{description}",
+                welcome_text,
                 reply_markup=markup,
                 parse_mode="Markdown"
             )
-            logger.info(f"/start received in private chat from {message.from_user.id}")
-        
-        # إذا كانت الرسالة واردة داخل مجموعة أو مجموعة سوبر
-        else:
-            bot_status = bot.get_chat_member(chat_id=message.chat.id, user_id=bot_info.id).status
-            if bot_status in ["administrator", "creator"]:
+            
+            # Check if user is admin in any group
+            is_admin = is_user_admin_in_any_group(message.from_user.id)
+            
+            if is_admin:
+                # Send settings panel for admin users
+                settings_markup = types.InlineKeyboardMarkup(row_width=1)
+                settings_markup.add(
+                    types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
+                )
                 bot.send_message(
                     message.chat.id,
-                    "تم تفعيل البوت في المجموعة! اذهب إلى الخاص لتعديل الإعدادات. ✅",
+                    "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                    reply_markup=settings_markup,
                     parse_mode="Markdown"
                 )
-                # أرسل لوحة الإعدادات إلى الخاص بالشخص الذي أرسل /start
+                logger.info(f"/start in private chat from admin user {message.from_user.id}")
+            else:
+                logger.info(f"/start in private chat from non-admin user {message.from_user.id}")
+        
+        # ──────────────────────────────────────────────────────────────
+        # Scenario 3 & 4: Group or Supergroup Chat
+        # ──────────────────────────────────────────────────────────────
+        else:
+            # Check if user is admin in the group
+            try:
+                user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+                user_is_admin = user_status in ["administrator", "creator"]
+            except Exception as e:
+                logger.warning(f"Could not check user admin status: {e}")
+                user_is_admin = False
+            
+            if user_is_admin:
+                # User is admin - activate bot and send settings to private chat
+                bot.send_message(
+                    message.chat.id,
+                    f"تم تفعيل البوت! اذهب إلى الخاص (@{bot_username}) لتعديل الإعدادات",
+                    parse_mode="Markdown"
+                )
+                
+                # Try to send settings panel to user's private chat
                 try:
+                    settings_markup = types.InlineKeyboardMarkup(row_width=1)
+                    settings_markup.add(
+                        types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
+                    )
                     bot.send_message(
                         message.from_user.id,
-                        "هنا لوحة الإعدادات:",
-                        reply_markup=cmd_settings_markup(),
+                        "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                        reply_markup=settings_markup,
                         parse_mode="Markdown"
                     )
-                    logger.info(f"Settings panel sent to user {message.from_user.id}")
+                    logger.info(f"Settings panel sent to admin user {message.from_user.id} from group {message.chat.id}")
                 except Exception as e:
-                    # If unable to send to private chat (user hasn't started bot)
                     logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
                     bot.send_message(
                         message.chat.id,
-                        "⚠️ يرجى بدء محادثة خاصة مع البوت أولاً لاستلام لوحة الإعدادات.",
+                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات.",
                         parse_mode="Markdown"
                     )
-                logger.info(f"/start received in group {message.chat.id} (bot is admin)")
             else:
+                # User is not admin
                 bot.send_message(
                     message.chat.id,
-                    "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل 🔑",
+                    "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل",
                     parse_mode="Markdown"
                 )
-                logger.info(f"/start received in group {message.chat.id} (bot is not admin)")
+                logger.info(f"/start in group {message.chat.id} from non-admin user {message.from_user.id}")
+                
     except Exception as e:
         logger.error(f"Error in cmd_start: {e}", exc_info=True)
         try:
@@ -760,21 +890,64 @@ def callback_toggle(call: types.CallbackQuery):
 
     bot.answer_callback_query(call.id, "تم التحديث")
 
-@bot.callback_query_handler(func=lambda call: call.data == "settings_panel")
-def callback_settings_panel(call: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "open_settings")
+def callback_open_settings(call: types.CallbackQuery):
     """
-    Handle callback for settings panel button.
-    This redirects users to use /settings command in their group.
+    Handle callback for open_settings button.
+    Displays the full settings panel with all available options.
     """
     try:
-        bot.answer_callback_query(
-            call.id,
-            "يرجى استخدام أمر /settings في المجموعة لتعديل الإعدادات",
-            show_alert=True
+        # Check if user is admin in any group
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ يجب أن تكون مشرفًا في إحدى المجموعات لعرض الإعدادات",
+                show_alert=True
+            )
+            return
+        
+        # Answer the callback query
+        bot.answer_callback_query(call.id, "تم تحميل الإعدادات")
+        
+        # Build settings display message
+        settings_text = (
+            "⚙️ *إعدادات البوت*\n\n"
+            "يمكنك تعديل إعدادات البوت في أي مجموعة تكون مشرفًا فيها.\n\n"
+            "*الميزات المتاحة:*\n"
+            "🌅 أذكار الصباح\n"
+            "🌙 أذكار المساء\n"
+            "📿 سورة الكهف (الجمعة)\n"
+            "🕌 أدعية الجمعة\n"
+            "😴 رسالة النوم\n"
+            "🗑️ حذف رسائل الخدمة\n\n"
+            "*للتعديل:*\n"
+            "استخدم أمر `/settings` في المجموعة التي تريد تعديل إعداداتها"
         )
-        logger.info(f"Settings panel callback from user {call.from_user.id}")
+        
+        # Edit the message to show settings
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"Settings displayed for user {call.from_user.id}")
+        
     except Exception as e:
-        logger.error(f"Error in callback_settings_panel: {e}", exc_info=True)
+        logger.error(f"Error in callback_open_settings: {e}", exc_info=True)
+        # Only answer callback if not already answered
+        try:
+            bot.answer_callback_query(
+                call.id,
+                "حدث خطأ أثناء تحميل الإعدادات",
+                show_alert=True
+            )
+        except Exception:
+            # Callback already answered
+            pass
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
