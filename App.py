@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import time
+import base64
 from datetime import datetime
 import pytz
 import random
@@ -2059,11 +2060,25 @@ def cmd_start(message: types.Message):
                 start_param = message.text.split()[1]
                 
                 if start_param.startswith("group_"):
-                    # Extract and decode the chat_id
-                    import base64
+                    # Extract and decode the chat_id with validation
                     try:
                         chat_id_encoded = start_param.replace("group_", "")
-                        chat_id = int(base64.b64decode(chat_id_encoded).decode())
+                        
+                        # Decode and validate
+                        decoded_str = base64.b64decode(chat_id_encoded).decode('utf-8')
+                        chat_id = int(decoded_str)
+                        
+                        # Validate chat_id format
+                        # Telegram group chat IDs are negative and typically start with -100
+                        # Private chat IDs are positive
+                        if chat_id >= 0:
+                            logger.warning(f"Invalid group chat_id (must be negative): {chat_id}")
+                            bot.send_message(
+                                message.chat.id,
+                                "⚠️ *خطأ في الوصول*\n\nمعرف المجموعة غير صحيح.",
+                                parse_mode="Markdown"
+                            )
+                            return
                         
                         # Check if user is admin of this specific chat
                         if is_user_admin_of_chat(message.from_user.id, chat_id):
@@ -2202,7 +2217,6 @@ def cmd_start(message: types.Message):
                     # Format: ?start=group_<chat_id>
                     # We need to encode the chat_id to avoid negative numbers in deep links
                     # Use base64 encoding to handle negative chat IDs
-                    import base64
                     chat_id_encoded = base64.b64encode(str(message.chat.id).encode()).decode()
                     start_link = f"https://t.me/{bot_username}?start=group_{chat_id_encoded}"
                     
@@ -2366,7 +2380,6 @@ def callback_open_settings(call: types.CallbackQuery):
                 chat_title = chat_info.title or f"Group {chat_id}"
                 
                 # Encode chat_id for callback data
-                import base64
                 chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
                 
                 markup.add(
@@ -2410,10 +2423,20 @@ def callback_select_group(call: types.CallbackQuery):
     Opens the settings panel for the selected group.
     """
     try:
-        # Extract and decode the chat_id
-        import base64
+        # Extract and decode the chat_id with validation
         chat_id_encoded = call.data.replace("select_group_", "")
-        chat_id = int(base64.b64decode(chat_id_encoded).decode())
+        
+        try:
+            decoded_str = base64.b64decode(chat_id_encoded).decode('utf-8')
+            chat_id = int(decoded_str)
+        except (ValueError, UnicodeDecodeError) as e:
+            logger.error(f"Invalid chat_id encoding in callback: {e}")
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ خطأ في معرف المجموعة",
+                show_alert=True
+            )
+            return
         
         # Verify user is admin of this chat
         if not is_user_admin_of_chat(call.from_user.id, chat_id):
@@ -2553,7 +2576,6 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         # Add back button with appropriate callback data
         if chat_id:
             # New format: go back to group-specific settings
-            import base64
             chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
             markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
         else:
