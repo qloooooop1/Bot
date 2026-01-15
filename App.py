@@ -39,11 +39,22 @@ if not BOT_TOKEN:
     logger.critical("BOT_TOKEN غير موجود في متغيرات البيئة")
     raise ValueError("BOT_TOKEN is required")
 
-PORT = int(os.environ.get("PORT", 5000))
+# PORT configuration with proper validation
+try:
+    PORT = int(os.environ.get("PORT", 5000))
+    if not (1 <= PORT <= 65535):
+        logger.warning(f"Invalid PORT value {PORT}, using default 5000")
+        PORT = 5000
+    logger.info(f"PORT configured: {PORT}")
+except ValueError as e:
+    logger.error(f"Error parsing PORT: {e}, using default 5000")
+    PORT = 5000
+
 TIMEZONE = pytz.timezone("Asia/Riyadh")
 
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'bot-8c0e.onrender.com')}{WEBHOOK_PATH}"
+logger.info(f"WEBHOOK_URL configured: {WEBHOOK_URL}")
 
 # ────────────────────────────────────────────────
 #               Instances
@@ -432,76 +443,85 @@ def send_azkar(chat_id: int, azkar_type: str):
 # ────────────────────────────────────────────────
 
 def schedule_chat_jobs(chat_id: int):
-    settings = get_chat_settings(chat_id)
+    """
+    Schedule all azkar jobs for a specific chat based on its settings.
+    
+    Args:
+        chat_id (int): The Telegram chat ID to schedule jobs for
+    """
+    try:
+        settings = get_chat_settings(chat_id)
 
-    # Remove previous jobs
-    for job in scheduler.get_jobs():
-        if str(chat_id) in job.id:
-            job.remove()
+        # Remove previous jobs
+        for job in scheduler.get_jobs():
+            if str(chat_id) in job.id:
+                job.remove()
 
-    # Morning Azkar
-    if settings["morning_azkar"]:
-        try:
-            h, m = map(int, settings["morning_time"].split(":"))
+        # Morning Azkar
+        if settings["morning_azkar"]:
+            try:
+                h, m = map(int, settings["morning_time"].split(":"))
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "morning"],
+                    id=f"morning_{chat_id}",
+                    replace_existing=True
+                )
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid morning time for {chat_id}: {e}")
+
+        # Evening Azkar
+        if settings["evening_azkar"]:
+            try:
+                h, m = map(int, settings["evening_time"].split(":"))
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "evening"],
+                    id=f"evening_{chat_id}",
+                    replace_existing=True
+                )
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid evening time for {chat_id}: {e}")
+
+        # Friday Kahf reminder
+        if settings["friday_sura"]:
             scheduler.add_job(
                 send_azkar,
-                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                args=[chat_id, "morning"],
-                id=f"morning_{chat_id}",
+                CronTrigger(day_of_week="fri", hour=9, minute=0, timezone=TIMEZONE),
+                args=[chat_id, "friday_kahf"],
+                id=f"kahf_{chat_id}",
                 replace_existing=True
             )
-        except:
-            logger.error(f"Invalid morning time for {chat_id}")
 
-    # Evening Azkar
-    if settings["evening_azkar"]:
-        try:
-            h, m = map(int, settings["evening_time"].split(":"))
+        # Friday Dua
+        if settings["friday_dua"]:
             scheduler.add_job(
                 send_azkar,
-                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                args=[chat_id, "evening"],
-                id=f"evening_{chat_id}",
+                CronTrigger(day_of_week="fri", hour=10, minute=0, timezone=TIMEZONE),
+                args=[chat_id, "friday_dua"],
+                id=f"friday_dua_{chat_id}",
                 replace_existing=True
             )
-        except:
-            logger.error(f"Invalid evening time for {chat_id}")
 
-    # Friday Kahf reminder
-    if settings["friday_sura"]:
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(day_of_week="fri", hour=9, minute=0, timezone=TIMEZONE),
-            args=[chat_id, "friday_kahf"],
-            id=f"kahf_{chat_id}",
-            replace_existing=True
-        )
+        # Sleep message
+        if settings["sleep_message"]:
+            try:
+                h, m = map(int, settings["sleep_time"].split(":"))
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "sleep"],
+                    id=f"sleep_{chat_id}",
+                    replace_existing=True
+                )
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid sleep time for {chat_id}: {e}")
 
-    # Friday Dua
-    if settings["friday_dua"]:
-        scheduler.add_job(
-            send_azkar,
-            CronTrigger(day_of_week="fri", hour=10, minute=0, timezone=TIMEZONE),
-            args=[chat_id, "friday_dua"],
-            id=f"friday_dua_{chat_id}",
-            replace_existing=True
-        )
-
-    # Sleep message
-    if settings["sleep_message"]:
-        try:
-            h, m = map(int, settings["sleep_time"].split(":"))
-            scheduler.add_job(
-                send_azkar,
-                CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                args=[chat_id, "sleep"],
-                id=f"sleep_{chat_id}",
-                replace_existing=True
-            )
-        except:
-            logger.error(f"Invalid sleep time for {chat_id}")
-
-    logger.info(f"Scheduled jobs for chat {chat_id}")
+        logger.info(f"Scheduled jobs for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error scheduling jobs for chat {chat_id}: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Bot Handlers
@@ -509,29 +529,38 @@ def schedule_chat_jobs(chat_id: int):
 
 @bot.my_chat_member_handler()
 def my_chat_member_handler(update: types.ChatMemberUpdated):
-    chat_id = update.chat.id
-    new_status = update.new_chat_member.status
+    """
+    Handle bot membership changes in chats.
+    Automatically enables/disables the bot based on admin status.
+    """
+    try:
+        chat_id = update.chat.id
+        new_status = update.new_chat_member.status
+        
+        logger.info(f"Bot status changed in chat {chat_id}: {new_status}")
 
-    if new_status in ["administrator", "creator"]:
-        update_chat_setting(chat_id, "is_enabled", 1)
-        schedule_chat_jobs(chat_id)
-        try:
-            bot.send_message(
-                chat_id,
-                "✅ *تم تفعيل البوت تلقائياً!*\n\n"
-                "سيبدأ بإرسال الأذكار في الأوقات المحددة\n"
-                "استخدم /settings لتعديل الإعدادات",
-                parse_mode="Markdown"
-            )
-            logger.info(f"Bot activated in chat {chat_id}")
-        except Exception as e:
-            logger.error(f"Failed to send activation message to {chat_id}: {e}")
-    else:
-        update_chat_setting(chat_id, "is_enabled", 0)
-        for job in scheduler.get_jobs():
-            if str(chat_id) in job.id:
-                job.remove()
-        logger.info(f"Bot deactivated in chat {chat_id}")
+        if new_status in ["administrator", "creator"]:
+            update_chat_setting(chat_id, "is_enabled", 1)
+            schedule_chat_jobs(chat_id)
+            try:
+                bot.send_message(
+                    chat_id,
+                    "✅ *تم تفعيل البوت تلقائياً!*\n\n"
+                    "سيبدأ بإرسال الأذكار في الأوقات المحددة\n"
+                    "استخدم /settings لتعديل الإعدادات",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"Bot activated in chat {chat_id}")
+            except Exception as e:
+                logger.error(f"Failed to send activation message to {chat_id}: {e}")
+        else:
+            update_chat_setting(chat_id, "is_enabled", 0)
+            for job in scheduler.get_jobs():
+                if str(chat_id) in job.id:
+                    job.remove()
+            logger.info(f"Bot deactivated in chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error in my_chat_member_handler: {e}", exc_info=True)
 
 @bot.message_handler(content_types=[
     'new_chat_members', 'left_chat_member', 'new_chat_title',
@@ -540,36 +569,97 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
     'voice_chat_started', 'voice_chat_ended', 'voice_chat_participants_invited'
 ])
 def delete_service_messages(message: types.Message):
+    """
+    Delete service messages in groups if the feature is enabled.
+    Service messages include member joins/leaves, pin notifications, etc.
+    """
     try:
         chat_id = message.chat.id
         settings = get_chat_settings(chat_id)
         if settings["delete_service_messages"]:
             bot.delete_message(chat_id, message.message_id)
             logger.debug(f"Deleted service message in {chat_id}")
-    except:
-        pass
+    except Exception as e:
+        # Fail silently as service message deletion is non-critical
+        logger.debug(f"Could not delete service message in {chat_id}: {e}")
 
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
-    if message.chat.type == "private":
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
-            types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
-            types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعة", url=f"https://t.me/{bot.get_me().username}?startgroup=true")
-        )
-        bot.reply_to(
-            message,
-            "مرحباً، أنا بوت نور الذكر.\n\n"
-            "أقوم بنشر الأذكار اليومية والآيات والأحاديث بشكل تلقائي في المجموعات. "
-            "أضفني كمشرف لكي أعمل بشكل صحيح.",
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        logger.info(f"/start received in private chat from {message.from_user.id}")
-    else:
-        bot.reply_to(message, "تم التفعيل! استخدم /settings للإعدادات")
-        logger.info(f"/start received in group {message.chat.id}")
+    """
+    Handle /start command in both private chats and groups.
+    Provides clear information and interactive buttons.
+    """
+    try:
+        if message.chat.type == "private":
+            # Create keyboard with three buttons for private chat
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            
+            # Get bot username safely
+            try:
+                bot_username = bot.get_me().username
+            except telebot.apihelper.ApiException as e:
+                logger.error(f"Failed to get bot username from Telegram: {e}")
+                bot_username = "NourAdhkarBot"  # Fallback
+            except Exception as e:
+                # Catch any other unexpected errors
+                logger.error(f"Unexpected error getting bot username: {e}")
+                bot_username = "NourAdhkarBot"  # Fallback
+            
+            markup.add(
+                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
+                types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+                types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعة", url=f"https://t.me/{bot_username}?startgroup=true")
+            )
+            
+            welcome_text = (
+                "🌟 *مرحباً بك في بوت نور الذكر* 🌟\n\n"
+                "📿 *أنا بوت يقوم بإرسال:*\n"
+                "• أذكار الصباح والمساء\n"
+                "• سورة الكهف يوم الجمعة\n"
+                "• أدعية الجمعة\n"
+                "• رسائل النوم\n\n"
+                "✨ *طريقة الاستخدام:*\n"
+                "1. أضفني إلى مجموعتك\n"
+                "2. اجعلني مشرفاً\n"
+                "3. سأبدأ العمل تلقائياً!\n\n"
+                "⚙️ استخدم الأزرار أدناه للتواصل والإضافة"
+            )
+            
+            bot.reply_to(
+                message,
+                welcome_text,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+            logger.info(f"/start received in private chat from {message.from_user.id}")
+        else:
+            # Group chat response with buttons
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
+                types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar")
+            )
+            
+            group_text = (
+                "✅ *تم التفعيل بنجاح!*\n\n"
+                "📿 البوت جاهز لإرسال الأذكار اليومية\n"
+                "⚙️ استخدم /settings لتخصيص الإعدادات (للمشرفين فقط)"
+            )
+            
+            bot.reply_to(
+                message,
+                group_text,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+            logger.info(f"/start received in group {message.chat.id}")
+    except Exception as e:
+        logger.error(f"Error in cmd_start: {e}", exc_info=True)
+        try:
+            bot.reply_to(message, "حدث خطأ، يرجى المحاولة مرة أخرى")
+        except Exception:
+            # Final fallback - nothing we can do if even error message fails
+            pass
 
 @bot.message_handler(commands=["settings"])
 def cmd_settings(message: types.Message):
