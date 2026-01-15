@@ -190,6 +190,7 @@ def init_db():
             username TEXT,
             first_name TEXT,
             last_name TEXT,
+            is_primary_admin INTEGER DEFAULT 0,
             added_at INTEGER DEFAULT (strftime('%s', 'now')),
             UNIQUE(user_id, chat_id)
         )
@@ -290,6 +291,7 @@ def init_postgres_db():
                         username TEXT,
                         first_name TEXT,
                         last_name TEXT,
+                        is_primary_admin INTEGER DEFAULT 0,
                         added_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
                         UNIQUE(user_id, chat_id)
                     )
@@ -749,7 +751,7 @@ def update_fasting_reminder_setting(chat_id: int, key: str, value):
 #               Admin Management Functions
 # ────────────────────────────────────────────────
 
-def save_admin_info(user_id: int, chat_id: int, username: str = None, first_name: str = None, last_name: str = None):
+def save_admin_info(user_id: int, chat_id: int, username: str = None, first_name: str = None, last_name: str = None, is_primary_admin: bool = False):
     """
     Save or update admin/supervisor information in the database.
     
@@ -759,31 +761,60 @@ def save_admin_info(user_id: int, chat_id: int, username: str = None, first_name
         username (str): User's username (optional)
         first_name (str): User's first name (optional)
         last_name (str): User's last name (optional)
+        is_primary_admin (bool): Whether this is the primary admin (first to press /start)
     """
     conn, c, is_postgres = get_db_connection()
     
     try:
         placeholder = "%s" if is_postgres else "?"
         
+        # Check if this is the first admin for this chat
+        if is_primary_admin:
+            # Check if there's already a primary admin
+            c.execute(f'''
+                SELECT user_id FROM admins 
+                WHERE chat_id = {placeholder} AND is_primary_admin = 1
+            ''', (chat_id,))
+            existing_primary = c.fetchone()
+            
+            # If there's already a primary admin and it's not this user, don't set as primary
+            if existing_primary and existing_primary[0] != user_id:
+                is_primary_admin = False
+        
         # Try to insert, on conflict update
         if is_postgres:
             c.execute(f'''
-                INSERT INTO admins (user_id, chat_id, username, first_name, last_name, added_at)
-                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, EXTRACT(EPOCH FROM NOW()))
+                INSERT INTO admins (user_id, chat_id, username, first_name, last_name, is_primary_admin, added_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, EXTRACT(EPOCH FROM NOW()))
                 ON CONFLICT (user_id, chat_id)
                 DO UPDATE SET username = EXCLUDED.username, 
                              first_name = EXCLUDED.first_name, 
-                             last_name = EXCLUDED.last_name
-            ''', (user_id, chat_id, username, first_name, last_name))
+                             last_name = EXCLUDED.last_name,
+                             is_primary_admin = CASE 
+                                 WHEN admins.is_primary_admin = 1 THEN 1 
+                                 ELSE EXCLUDED.is_primary_admin 
+                             END
+            ''', (user_id, chat_id, username, first_name, last_name, int(is_primary_admin)))
         else:
+            # SQLite - check if entry exists first
+            c.execute(f'''
+                SELECT is_primary_admin FROM admins 
+                WHERE user_id = {placeholder} AND chat_id = {placeholder}
+            ''', (user_id, chat_id))
+            existing = c.fetchone()
+            
+            if existing and existing[0] == 1:
+                # Keep existing primary admin status
+                is_primary_admin = True
+            
             # SQLite - use INSERT OR REPLACE
             c.execute(f'''
-                INSERT OR REPLACE INTO admins (user_id, chat_id, username, first_name, last_name, added_at)
-                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, strftime('%s', 'now'))
-            ''', (user_id, chat_id, username, first_name, last_name))
+                INSERT OR REPLACE INTO admins (user_id, chat_id, username, first_name, last_name, is_primary_admin, added_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, strftime('%s', 'now'))
+            ''', (user_id, chat_id, username, first_name, last_name, int(is_primary_admin)))
         
         conn.commit()
-        logger.info(f"Saved admin info for user {user_id} in chat {chat_id}")
+        logger.info(f"Saved admin info for user {user_id} in chat {chat_id} (primary: {is_primary_admin})")
     except Exception as e:
         logger.error(f"Error saving admin info: {e}", exc_info=True)
     finally:
@@ -843,7 +874,7 @@ def get_all_admins_for_chat(chat_id: int) -> list:
     try:
         placeholder = "%s" if is_postgres else "?"
         c.execute(f'''
-            SELECT user_id, chat_id, username, first_name, last_name, added_at
+            SELECT user_id, chat_id, username, first_name, last_name, is_primary_admin, added_at
             FROM admins
             WHERE chat_id = {placeholder}
         ''', (chat_id,))
@@ -858,7 +889,8 @@ def get_all_admins_for_chat(chat_id: int) -> list:
                 "username": row[2],
                 "first_name": row[3],
                 "last_name": row[4],
-                "added_at": row[5]
+                "is_primary_admin": bool(row[5]),
+                "added_at": row[6]
             })
         return admins
     except Exception as e:
@@ -866,6 +898,20 @@ def get_all_admins_for_chat(chat_id: int) -> list:
         return []
     finally:
         conn.close()
+
+def is_user_admin_of_chat(user_id: int, chat_id: int) -> bool:
+    """
+    Check if a user is an admin of a specific chat.
+    
+    Args:
+        user_id (int): The Telegram user ID to check
+        chat_id (int): The chat ID to check against
+        
+    Returns:
+        bool: True if user is admin of this chat, False otherwise
+    """
+    admin_info = get_admin_info(user_id, chat_id)
+    return admin_info is not None
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
@@ -1942,8 +1988,9 @@ def cmd_start(message: types.Message):
     Scenarios:
     1. Private Chat - User is admin: Show welcome + advanced settings panel
     2. Private Chat - User is not admin: Show welcome + guidance to add bot as admin
-    3. Group Chat - User is admin: Show settings panel in group
-    4. Group Chat - User is not admin: Request to make bot admin with buttons
+    3. Private Chat - With group context (deep link): Open settings for specific group
+    4. Group Chat - User is admin: Show settings panel in group
+    5. Group Chat - User is not admin: Request to make bot admin with buttons
     """
     try:
         logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
@@ -1953,9 +2000,65 @@ def cmd_start(message: types.Message):
         bot_username = bot_info.username or "NourAdhkarBot"
         
         # ──────────────────────────────────────────────────────────────
-        # Scenario 1 & 2: Private Chat
+        # Scenario 1, 2 & 3: Private Chat
         # ──────────────────────────────────────────────────────────────
         if message.chat.type == "private":
+            # Check if this is a deep link with group context
+            # Format: /start group_<base64_encoded_chat_id>
+            if message.text and len(message.text.split()) > 1:
+                start_param = message.text.split()[1]
+                
+                if start_param.startswith("group_"):
+                    # Extract and decode the chat_id
+                    import base64
+                    try:
+                        chat_id_encoded = start_param.replace("group_", "")
+                        chat_id = int(base64.b64decode(chat_id_encoded).decode())
+                        
+                        # Check if user is admin of this specific chat
+                        if is_user_admin_of_chat(message.from_user.id, chat_id):
+                            # Open settings for this specific group
+                            logger.info(f"Opening settings for group {chat_id} for user {message.from_user.id}")
+                            
+                            # Store the chat_id in a way that callback handlers can access it
+                            # We'll use callback_data to pass the chat_id
+                            settings_text = (
+                                "⚙️ *لوحة التحكم*\n\n"
+                                f"إعدادات المجموعة (ID: {chat_id})\n\n"
+                                "*اختر القسم الذي تريد تعديله:*"
+                            )
+                            
+                            # Create keyboard with main sections - encode chat_id in callback data
+                            markup = types.InlineKeyboardMarkup(row_width=2)
+                            markup.add(
+                                types.InlineKeyboardButton("🌅🌙 أذكار الصباح والمساء", callback_data=f"morning_evening_settings_{chat_id}"),
+                                types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data=f"friday_settings_{chat_id}"),
+                                types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data=f"ramadan_settings_{chat_id}"),
+                                types.InlineKeyboardButton("🕋 إعدادات الحج", callback_data=f"hajj_eid_settings_{chat_id}"),
+                                types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data=f"fasting_reminders_{chat_id}")
+                            )
+                            
+                            bot.send_message(
+                                message.chat.id,
+                                settings_text,
+                                reply_markup=markup,
+                                parse_mode="Markdown"
+                            )
+                            return
+                        else:
+                            bot.send_message(
+                                message.chat.id,
+                                "⚠️ *خطأ في الوصول*\n\n"
+                                "لست مشرفًا في هذه المجموعة.\n"
+                                "يجب أن تكون مشرفًا في المجموعة للوصول إلى إعداداتها.",
+                                parse_mode="Markdown"
+                            )
+                            return
+                    except Exception as e:
+                        logger.error(f"Error decoding group context: {e}")
+                        # Fall through to normal /start handling
+            
+            # Normal private chat handling
             # Check if user is admin in any group
             is_admin = is_user_admin_in_any_group(message.from_user.id)
             
@@ -2021,26 +2124,37 @@ def cmd_start(message: types.Message):
                 user_is_admin = False
             
             if user_is_admin:
-                # Save admin information
+                # Save admin information - mark as primary if this is the first admin
                 try:
                     user = message.from_user
+                    # Check if there are any existing admins for this chat
+                    existing_admins = get_all_admins_for_chat(message.chat.id)
+                    is_primary = len(existing_admins) == 0  # First admin becomes primary
+                    
                     save_admin_info(
                         user_id=user.id,
                         chat_id=message.chat.id,
                         username=user.username,
                         first_name=user.first_name,
-                        last_name=user.last_name
+                        last_name=user.last_name,
+                        is_primary_admin=is_primary
                     )
+                    logger.info(f"Saved admin {user.id} for chat {message.chat.id} (primary: {is_primary})")
                 except Exception as e:
                     logger.error(f"Error saving admin info: {e}")
                 
-                # Send message in group prompting admin to open private chat
+                # Send message in group prompting admin to open private chat with group context
                 try:
                     bot_info = bot.get_me()
                     bot_username = bot_info.username or "NourAdhkarBot"
                     
-                    # Create a deep link to open settings in private chat
-                    start_link = f"https://t.me/{bot_username}?start=settings"
+                    # Create a deep link with group chat_id encoded
+                    # Format: ?start=group_<chat_id>
+                    # We need to encode the chat_id to avoid negative numbers in deep links
+                    # Use base64 encoding to handle negative chat IDs
+                    import base64
+                    chat_id_encoded = base64.b64encode(str(message.chat.id).encode()).decode()
+                    start_link = f"https://t.me/{bot_username}?start=group_{chat_id_encoded}"
                     
                     markup = types.InlineKeyboardMarkup(row_width=1)
                     markup.add(
@@ -2058,7 +2172,7 @@ def cmd_start(message: types.Message):
                         parse_mode="Markdown",
                         reply_markup=markup
                     )
-                    logger.info(f"/start in group {message.chat.id} - redirected admin {message.from_user.id} to private chat")
+                    logger.info(f"/start in group {message.chat.id} - redirected admin {message.from_user.id} to private chat with context")
                 except Exception as e:
                     logger.error(f"Error redirecting admin to private chat: {e}")
                     bot.send_message(
@@ -2158,67 +2272,64 @@ def callback_toggle(call: types.CallbackQuery):
 def callback_open_settings(call: types.CallbackQuery):
     """
     Handle callback for open_settings button.
-    Displays the full advanced settings panel with all available sections.
+    Displays a list of groups that the user can manage, or the full advanced settings panel.
     """
     try:
-        # Check if user is admin in any group
-        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        # Get all groups where this user is an admin
+        conn, c, is_postgres = get_db_connection()
         
-        if not is_admin:
+        try:
+            placeholder = "%s" if is_postgres else "?"
+            c.execute(f'''
+                SELECT DISTINCT chat_id FROM admins 
+                WHERE user_id = {placeholder}
+            ''', (call.from_user.id,))
+            
+            user_groups = [row[0] for row in c.fetchall()]
+        finally:
+            conn.close()
+        
+        if not user_groups:
             bot.answer_callback_query(
                 call.id,
-                "⚠️ يجب أن تكون مشرفًا في إحدى المجموعات لعرض الإعدادات",
+                "⚠️ لم يتم العثور على مجموعات. يرجى استخدام /start في مجموعة أولاً.",
                 show_alert=True
             )
             return
         
         # Answer the callback query
-        bot.answer_callback_query(call.id, "تم تحميل لوحة التحكم")
+        bot.answer_callback_query(call.id, "اختر المجموعة")
         
-        # Build advanced settings panel
+        # Build group selection panel
         settings_text = (
             "⚙️ *لوحة التحكم المتقدمة*\n\n"
-            "*أقسام الإعدادات الرئيسية:*\n\n"
-            "🌅 *أذكار الصباح*\n"
-            "• قابلة للتفعيل/التعطيل\n"
-            "• توقيت قابل للتخصيص\n\n"
-            "🌙 *أذكار المساء*\n"
-            "• قابلة للتفعيل/التعطيل\n"
-            "• توقيت قابل للتخصيص\n\n"
-            "📿 *سورة الكهف وأدعية الجمعة*\n"
-            "• إرسال تلقائي كل جمعة\n"
-            "• دعم الوسائط المتعددة\n\n"
-            "🌙 *إعدادات رمضان*\n"
-            "• ليلة القدر\n"
-            "• العشر الأواخر\n"
-            "• دعاء الإفطار\n\n"
-            "🕋 *إعدادات الحج والعيد*\n"
-            "• يوم عرفة\n"
-            "• أذكار الحج\n"
-            "• تكبيرات العيد\n\n"
-            "✨ *الأدعية المتنوعة*\n"
-            "• فواصل زمنية من دقيقة إلى يوم كامل\n"
-            "• نصوص، صور، صوتيات، ملفات PDF\n\n"
-            "🌙 *تذكيرات الصيام*\n"
-            "• تذكير بصيام الاثنين والخميس\n"
-            "• تذكير بصيام يوم عرفة\n\n"
-            "*ملاحظة:* هذه الإعدادات مستقلة لكل مجموعة"
+            "*اختر المجموعة التي تريد إدارتها:*\n\n"
         )
         
-        # Create keyboard with main sections
+        # Create keyboard with group buttons
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("🌅 أذكار الصباح والمساء", callback_data="morning_evening_settings"),
-            types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data="friday_settings"),
-            types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
-            types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
-            types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
-            types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="fasting_reminders_settings"),
-            types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
-            types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings")
-        )
         
-        # Edit the message to show settings
+        for chat_id in user_groups:
+            try:
+                # Get chat title
+                chat_info = bot.get_chat(chat_id)
+                chat_title = chat_info.title or f"Group {chat_id}"
+                
+                # Encode chat_id for callback data
+                import base64
+                chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+                
+                markup.add(
+                    types.InlineKeyboardButton(
+                        f"📱 {chat_title}",
+                        callback_data=f"select_group_{chat_id_encoded}"
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Could not get info for chat {chat_id}: {e}")
+                continue
+        
+        # Edit the message to show group selection
         bot.edit_message_text(
             settings_text,
             call.message.chat.id,
@@ -2227,7 +2338,7 @@ def callback_open_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Advanced settings panel displayed for user {call.from_user.id}")
+        logger.info(f"Group selection displayed for user {call.from_user.id} ({len(user_groups)} groups)")
         
     except Exception as e:
         logger.error(f"Error in callback_open_settings: {e}", exc_info=True)
@@ -2240,6 +2351,74 @@ def callback_open_settings(call: types.CallbackQuery):
             )
         except Exception:
             # Callback already answered
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_group_"))
+def callback_select_group(call: types.CallbackQuery):
+    """
+    Handle group selection from the list.
+    Opens the settings panel for the selected group.
+    """
+    try:
+        # Extract and decode the chat_id
+        import base64
+        chat_id_encoded = call.data.replace("select_group_", "")
+        chat_id = int(base64.b64decode(chat_id_encoded).decode())
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(
+                call.id,
+                "⚠️ لست مشرفًا في هذه المجموعة",
+                show_alert=True
+            )
+            return
+        
+        bot.answer_callback_query(call.id, "تم تحميل إعدادات المجموعة")
+        
+        # Get group info
+        try:
+            chat_info = bot.get_chat(chat_id)
+            chat_title = chat_info.title or f"Group {chat_id}"
+        except:
+            chat_title = f"Group {chat_id}"
+        
+        # Build settings panel for this group
+        settings_text = (
+            f"⚙️ *لوحة التحكم*\n\n"
+            f"📱 المجموعة: *{chat_title}*\n\n"
+            "*اختر القسم الذي تريد تعديله:*"
+        )
+        
+        # Create keyboard with main sections - encode chat_id in callback data
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("🌅🌙 أذكار الصباح والمساء", callback_data=f"morning_evening_settings_{chat_id}"),
+            types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data=f"friday_settings_{chat_id}"),
+            types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data=f"ramadan_settings_{chat_id}"),
+            types.InlineKeyboardButton("🕋 إعدادات الحج", callback_data=f"hajj_eid_settings_{chat_id}"),
+            types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data=f"fasting_reminders_{chat_id}")
+        )
+        markup.add(
+            types.InlineKeyboardButton("« العودة للمجموعات", callback_data="open_settings")
+        )
+        
+        # Edit the message to show settings
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Settings panel for group {chat_id} displayed to user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_select_group: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
             pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "advanced_settings")
