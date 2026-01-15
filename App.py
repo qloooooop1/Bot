@@ -201,7 +201,42 @@ def init_db():
     conn.close()
     logger.info("Database initialized with all tables")
 
+def migrate_db():
+    """Apply database migrations for new fields."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    try:
+        # Check if media format fields exist in diverse_azkar_settings
+        c.execute("PRAGMA table_info(diverse_azkar_settings)")
+        columns = [col[1] for col in c.fetchall()]
+        
+        # Add new media format fields if they don't exist
+        if 'enable_audio' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_audio INTEGER DEFAULT 1")
+            logger.info("Added enable_audio column to diverse_azkar_settings")
+        
+        if 'enable_images' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_images INTEGER DEFAULT 1")
+            logger.info("Added enable_images column to diverse_azkar_settings")
+        
+        if 'enable_pdf' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_pdf INTEGER DEFAULT 1")
+            logger.info("Added enable_pdf column to diverse_azkar_settings")
+        
+        if 'enable_text' not in columns:
+            c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_text INTEGER DEFAULT 1")
+            logger.info("Added enable_text column to diverse_azkar_settings")
+        
+        conn.commit()
+        logger.info("Database migration completed")
+    except Exception as e:
+        logger.error(f"Error during database migration: {e}", exc_info=True)
+    finally:
+        conn.close()
+
 init_db()
+migrate_db()
 
 def init_postgres_db():
     """Initialize PostgreSQL database tables if DATABASE_URL is configured."""
@@ -306,6 +341,47 @@ def init_postgres_db():
 
 # Initialize PostgreSQL if available
 init_postgres_db()
+
+def migrate_postgres_db():
+    """Apply database migrations for PostgreSQL."""
+    if not (DATABASE_URL and POSTGRES_AVAILABLE):
+        return
+    
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as c:
+                # Check if media format fields exist in diverse_azkar_settings
+                c.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='diverse_azkar_settings'
+                """)
+                columns = [col[0] for col in c.fetchall()]
+                
+                # Add new media format fields if they don't exist
+                if 'enable_audio' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_audio INTEGER DEFAULT 1")
+                    logger.info("Added enable_audio column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_images' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_images INTEGER DEFAULT 1")
+                    logger.info("Added enable_images column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_pdf' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_pdf INTEGER DEFAULT 1")
+                    logger.info("Added enable_pdf column to diverse_azkar_settings (PostgreSQL)")
+                
+                if 'enable_text' not in columns:
+                    c.execute("ALTER TABLE diverse_azkar_settings ADD COLUMN enable_text INTEGER DEFAULT 1")
+                    logger.info("Added enable_text column to diverse_azkar_settings (PostgreSQL)")
+                
+                conn.commit()
+                logger.info("PostgreSQL database migration completed")
+    except Exception as e:
+        logger.error(f"Error during PostgreSQL database migration: {e}", exc_info=True)
+
+# Run migrations
+migrate_postgres_db()
 
 # ────────────────────────────────────────────────
 #               Database Helper Functions
@@ -497,7 +573,11 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
             "enabled": bool(row[1]),
             "interval_minutes": row[2],
             "media_type": row[3],
-            "last_sent_timestamp": row[4]
+            "last_sent_timestamp": row[4],
+            "enable_audio": bool(row[5]) if len(row) > 5 else True,
+            "enable_images": bool(row[6]) if len(row) > 6 else True,
+            "enable_pdf": bool(row[7]) if len(row) > 7 else True,
+            "enable_text": bool(row[8]) if len(row) > 8 else True
         }
     except Exception as e:
         logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
@@ -507,7 +587,8 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
     # Whitelist validation to prevent SQL injection
-    allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp"}
+    allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp", 
+                    "enable_audio", "enable_images", "enable_pdf", "enable_text"}
     if key not in allowed_keys:
         logger.error(f"Invalid diverse azkar setting key: {key}")
         return
@@ -1304,35 +1385,64 @@ def get_random_media_by_category(category: str, media_type: str = "all"):
 
 def send_diverse_azkar(chat_id: int):
     """
-    Send a random diverse azkar to a chat.
+    Send a random diverse azkar to a chat with media format preferences.
     
     Args:
         chat_id (int): Chat ID to send to
     """
     try:
+        logger.info(f"send_diverse_azkar called for chat {chat_id}")
         settings = get_diverse_azkar_settings(chat_id)
         
         if not settings["enabled"]:
+            logger.info(f"Diverse azkar disabled for chat {chat_id}")
             return
+        
+        logger.info(f"Diverse azkar enabled for chat {chat_id}, preparing to send")
         
         msg = get_random_diverse_azkar()
         if not msg:
             logger.warning(f"No diverse azkar available for chat {chat_id}")
             return
         
-        # Check if media should be sent
-        media_type = settings.get("media_type", "text")
+        # Check media format preferences
+        enable_audio = settings.get("enable_audio", True)
+        enable_images = settings.get("enable_images", True)
+        enable_pdf = settings.get("enable_pdf", True)
+        enable_text = settings.get("enable_text", True)
         
-        if media_type != "text":
-            # Try to send with media
-            send_media_with_caption(chat_id, msg, media_type)
-        else:
-            # Send text only
+        logger.info(f"Media preferences for chat {chat_id}: audio={enable_audio}, images={enable_images}, pdf={enable_pdf}, text={enable_text}")
+        
+        # Build list of allowed media types
+        allowed_media_types = []
+        if enable_audio:
+            allowed_media_types.append("audio")
+        if enable_images:
+            allowed_media_types.append("images")
+        if enable_pdf:
+            allowed_media_types.append("documents")  # PDF files are documents
+        
+        # Try to send with media if any media type is enabled
+        sent = False
+        if allowed_media_types:
+            # Try to send with random allowed media type
+            # Note: Could make this probability configurable in future if needed
+            media_type = random.choice(allowed_media_types)
+            logger.info(f"Attempting to send diverse azkar with media type: {media_type}")
+            sent = send_media_with_caption(chat_id, msg, media_type)
+        
+        # Fallback to text if media failed or text is preferred
+        if not sent and enable_text:
+            logger.info(f"Sending diverse azkar as text to chat {chat_id}")
             bot.send_message(chat_id, msg, parse_mode="Markdown")
+            sent = True
         
-        # Update last sent timestamp
-        update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
-        logger.info(f"Sent diverse azkar to chat {chat_id}")
+        if sent:
+            # Update last sent timestamp
+            update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
+            logger.info(f"Successfully sent diverse azkar to chat {chat_id}")
+        else:
+            logger.warning(f"Failed to send diverse azkar to chat {chat_id} - all media types disabled")
         
     except Exception as e:
         logger.error(f"Error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
@@ -1822,16 +1932,30 @@ def schedule_chat_jobs(chat_id: int):
         
         # Diverse Azkar (interval-based)
         diverse_settings = get_diverse_azkar_settings(chat_id)
+        logger.info(f"Diverse azkar settings for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
+        
         if diverse_settings["enabled"] and diverse_settings["interval_minutes"] > 0:
-            scheduler.add_job(
+            # Remove any existing diverse azkar job first
+            for job in scheduler.get_jobs():
+                if job.id == f"diverse_azkar_{chat_id}":
+                    job.remove()
+                    logger.info(f"Removed existing diverse azkar job for chat {chat_id}")
+            
+            # Add new job
+            # Note: next_run_time set to now means the job runs once immediately,
+            # then continues on the interval schedule. This helps test that diverse azkar is working.
+            job = scheduler.add_job(
                 send_diverse_azkar,
                 'interval',
                 minutes=diverse_settings["interval_minutes"],
                 args=[chat_id],
                 id=f"diverse_azkar_{chat_id}",
-                replace_existing=True
+                replace_existing=True,
+                next_run_time=datetime.now(TIMEZONE)  # Run once immediately, then on interval
             )
-            logger.info(f"Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}")
+            logger.info(f"✓ Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}, next run: {job.next_run_time}")
+        else:
+            logger.info(f"Diverse azkar not scheduled for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
         
         # Fasting Reminders
         fasting_settings = get_fasting_reminders_settings(chat_id)
@@ -2160,28 +2284,79 @@ def cmd_start(message: types.Message):
             is_admin = is_user_admin_in_any_group(message.from_user.id)
             
             if is_admin:
-                # Welcome message for admin
-                welcome_text = (
-                    f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
-                    f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
-                    f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
-                    f"*أنت مشرف مثبت* ✅\n"
-                    f"يمكنك الآن الوصول إلى لوحة التحكم المتقدمة"
-                )
+                # Get all groups where this user is an admin and show settings directly
+                conn, c, is_postgres = get_db_connection()
                 
-                # Advanced control panel markup
-                markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(
-                    types.InlineKeyboardButton("⚙️ لوحة التحكم المتقدمة", callback_data="open_settings")
-                )
+                try:
+                    placeholder = "%s" if is_postgres else "?"
+                    c.execute(f'''
+                        SELECT DISTINCT chat_id FROM admins 
+                        WHERE user_id = {placeholder}
+                    ''', (message.from_user.id,))
+                    
+                    user_groups = [row[0] for row in c.fetchall()]
+                finally:
+                    conn.close()
                 
-                bot.send_message(
-                    message.chat.id,
-                    welcome_text,
-                    reply_markup=markup,
-                    parse_mode="Markdown"
-                )
-                logger.info(f"/start in private chat from admin user {message.from_user.id}")
+                if not user_groups:
+                    # No groups found - show welcome with guidance
+                    welcome_text = (
+                        f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                        f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                        f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
+                        f"⚠️ *للبدء:*\n"
+                        f"يرجى استخدام /start في إحدى المجموعات أولاً"
+                    )
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=1)
+                    markup.add(
+                        types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
+                        types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+                        types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
+                    )
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        welcome_text,
+                        reply_markup=markup,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    # Show control panel directly - group selection
+                    settings_text = (
+                        "⚙️ *لوحة التحكم المتقدمة*\n\n"
+                        "*اختر المجموعة التي تريد إدارتها:*\n\n"
+                    )
+                    
+                    # Create keyboard with group buttons
+                    markup = types.InlineKeyboardMarkup(row_width=1)
+                    
+                    for chat_id in user_groups:
+                        try:
+                            # Get chat title
+                            chat_info = bot.get_chat(chat_id)
+                            chat_title = chat_info.title or f"Group {chat_id}"
+                            
+                            # Encode chat_id for callback data
+                            chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+                            
+                            markup.add(
+                                types.InlineKeyboardButton(
+                                    f"📱 {chat_title}",
+                                    callback_data=f"select_group_{chat_id_encoded}"
+                                )
+                            )
+                        except Exception as e:
+                            logger.warning(f"Could not get info for chat {chat_id}: {e}")
+                            continue
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        settings_text,
+                        parse_mode="Markdown",
+                        reply_markup=markup
+                    )
+                    logger.info(f"/start in private chat - showing control panel directly for admin {message.from_user.id} with {len(user_groups)} groups")
             else:
                 # Non-admin user - show guidance
                 welcome_text = (
@@ -2506,6 +2681,7 @@ def callback_select_group(call: types.CallbackQuery):
             types.InlineKeyboardButton("🌅🌙 أذكار الصباح والمساء", callback_data=f"morning_evening_settings_{chat_id}"),
             types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data=f"friday_settings_{chat_id}"),
             types.InlineKeyboardButton("✨ أذكار متنوعة", callback_data=f"diverse_azkar_settings_{chat_id}"),
+            types.InlineKeyboardButton("⚙️ إعدادات عامة", callback_data=f"general_settings_{chat_id}"),
             types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data=f"ramadan_settings_{chat_id}"),
             types.InlineKeyboardButton("🕋 إعدادات الحج", callback_data=f"hajj_eid_settings_{chat_id}"),
             types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data=f"fasting_reminders_{chat_id}")
@@ -2706,9 +2882,327 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         except Exception:
             pass
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("general_settings"))
+def callback_general_settings(call: types.CallbackQuery):
+    """
+    Handle callback for general settings panel.
+    Shows sleep message and service message deletion controls.
+    """
+    try:
+        # Extract chat_id from callback data if present
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
+        else:
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "الإعدادات العامة")
+        
+        # Get settings
+        settings = get_chat_settings(chat_id)
+        sleep_status = "✅ مفعّل" if settings.get('sleep_message', 1) else "❌ معطّل"
+        sleep_time = settings.get('sleep_time', '22:00')
+        delete_service_status = "✅ مفعّل" if settings.get('delete_service_messages', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "⚙️ *الإعدادات العامة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• رسالة النوم: {sleep_status} (الوقت: {sleep_time})\n"
+            f"• حذف رسائل النظام: {delete_service_status}\n\n"
+            "*رسالة النوم:*\n"
+            "• يتم إرسال رسالة مساء الخير مع أذكار النوم\n"
+            "• الوقت الافتراضي: 22:00\n"
+            "• قابلة للتخصيص\n\n"
+            "*حذف رسائل النظام:*\n"
+            "• عند التفعيل، يتم حذف رسائل النظام تلقائياً\n"
+            "• الرسائل المشمولة:\n"
+            "  - رسائل انضمام/مغادرة الأعضاء\n"
+            "  - رسائل تغيير اسم المجموعة\n"
+            "  - رسائل تثبيت الرسائل\n"
+            "  - رسائل بدء/انتهاء المكالمات الصوتية\n"
+            "  - وغيرها من رسائل النظام\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل وتخصيص الأوقات"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Add toggle buttons
+        sleep_icon = "✅" if settings.get('sleep_message', 1) else "❌"
+        delete_icon = "✅" if settings.get('delete_service_messages', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{sleep_icon} رسالة النوم", 
+                callback_data=f"toggle_sleep_message_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{delete_icon} حذف رسائل النظام", 
+                callback_data=f"toggle_delete_service_messages_{chat_id}"
+            )
+        )
+        
+        # Add time preset button for sleep message
+        markup.add(
+            types.InlineKeyboardButton("😴 أوقات شائعة للنوم", callback_data=f"sleep_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"General settings displayed for user {call.from_user.id} in chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_general_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sleep_time_presets"))
+def callback_sleep_time_presets(call: types.CallbackQuery):
+    """Show preset times for sleep message with clickable time buttons."""
+    try:
+        # Extract chat_id from callback data if present
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
+        else:
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        settings = get_chat_settings(chat_id)
+        current_time = settings.get('sleep_time', '22:00')
+        
+        settings_text = (
+            "😴 *تخصيص وقت رسالة النوم*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
+            "• 21:00 - مساءً\n"
+            "• 22:00 - الافتراضي\n"
+            "• 23:00 - ليلاً\n"
+            "• 00:00 - منتصف الليل\n\n"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime sleep HH:MM`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        # Add clickable time buttons
+        time_options = [
+            ("21:00", "21:00 🌙"),
+            ("22:00", "22:00 ⭐"),
+            ("23:00", "23:00 🌃"),
+            ("00:00", "00:00 🌌")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
+            markup.add(
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_sleep_time_{time_value.replace(':', '')}_{chat_id}"
+                )
+            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"general_settings_{chat_id}")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in callback_sleep_time_presets: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_sleep_time_"))
+def callback_set_sleep_time(call: types.CallbackQuery):
+    """Handle setting sleep message time from preset buttons."""
+    try:
+        # Parse callback data: set_sleep_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 5:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "2100"
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "sleep_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت النوم: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"sleep_time_presets_{chat_id}"
+        callback_sleep_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_sleep_time: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_sleep_message_") or call.data.startswith("toggle_delete_service_messages_"))
+def callback_toggle_general_settings(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for sleep message and service message deletion.
+    Format: toggle_sleep_message_{chat_id} or toggle_delete_service_messages_{chat_id}
+    """
+    try:
+        # Parse callback data
+        parts = call.data.split("_")
+        if len(parts) < 3:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        chat_id = int(parts[-1])
+        
+        # Determine the setting type
+        if "sleep" in call.data:
+            setting_key = "sleep_message"
+            setting_name = "رسالة النوم"
+        elif "delete" in call.data:
+            setting_key = "delete_service_messages"
+            setting_name = "حذف رسائل النظام"
+        else:
+            bot.answer_callback_query(call.id, "⚠️ إعداد غير معروف", show_alert=True)
+            return
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Get current settings and toggle
+        settings = get_chat_settings(chat_id)
+        new_value = not settings.get(setting_key, 1)
+        update_chat_setting(chat_id, setting_key, new_value)
+        
+        # Reschedule jobs if it's sleep_message
+        if setting_key == "sleep_message":
+            schedule_chat_jobs(chat_id)
+        
+        # Prepare updated message
+        settings = get_chat_settings(chat_id)
+        sleep_status = "✅ مفعّل" if settings.get('sleep_message', 1) else "❌ معطّل"
+        sleep_time = settings.get('sleep_time', '22:00')
+        delete_service_status = "✅ مفعّل" if settings.get('delete_service_messages', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "⚙️ *الإعدادات العامة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• رسالة النوم: {sleep_status} (الوقت: {sleep_time})\n"
+            f"• حذف رسائل النظام: {delete_service_status}\n\n"
+            "*رسالة النوم:*\n"
+            "• يتم إرسال رسالة مساء الخير مع أذكار النوم\n"
+            "• الوقت الافتراضي: 22:00\n"
+            "• قابلة للتخصيص\n\n"
+            "*حذف رسائل النظام:*\n"
+            "• عند التفعيل، يتم حذف رسائل النظام تلقائياً\n"
+            "• الرسائل المشمولة:\n"
+            "  - رسائل انضمام/مغادرة الأعضاء\n"
+            "  - رسائل تغيير اسم المجموعة\n"
+            "  - رسائل تثبيت الرسائل\n"
+            "  - رسائل بدء/انتهاء المكالمات الصوتية\n"
+            "  - وغيرها من رسائل النظام\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل وتخصيص الأوقات"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        sleep_icon = "✅" if settings.get('sleep_message', 1) else "❌"
+        delete_icon = "✅" if settings.get('delete_service_messages', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{sleep_icon} رسالة النوم", 
+                callback_data=f"toggle_sleep_message_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{delete_icon} حذف رسائل النظام", 
+                callback_data=f"toggle_delete_service_messages_{chat_id}"
+            )
+        )
+        
+        # Add time preset button for sleep message
+        markup.add(
+            types.InlineKeyboardButton("😴 أوقات شائعة للنوم", callback_data=f"sleep_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_general_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("morning_time_presets"))
 def callback_morning_time_presets(call: types.CallbackQuery):
-    """Show preset times for morning azkar as information."""
+    """Show preset times for morning azkar with clickable time buttons."""
     try:
         # Extract chat_id from callback data if present
         chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
@@ -2725,34 +3219,55 @@ def callback_morning_time_presets(call: types.CallbackQuery):
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
                 return
+            # Show error if no chat_id
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
         
-        bot.answer_callback_query(call.id, "أوقات شائعة للصباح")
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        current_time = "05:00"
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            current_time = settings.get('morning_time', '05:00')
         
         settings_text = (
-            "⏰ *أوقات شائعة لأذكار الصباح*\n\n"
-            "*الأوقات المقترحة:*\n"
+            "⏰ *تخصيص وقت أذكار الصباح*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
             "• 04:30 - بعد صلاة الفجر مباشرة\n"
             "• 05:00 - الافتراضي\n"
             "• 06:00 - مع شروق الشمس تقريباً\n"
             "• 07:00 - صباحاً\n\n"
-            "*لتخصيص الوقت:*\n"
-            "استخدم الأمر في المجموعة:\n"
-            "`/settime morning HH:MM`\n\n"
-            "*مثال:*\n"
-            "`/settime morning 06:00`"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime morning HH:MM`"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         
-        # Add back button with chat_id if available
-        if chat_id:
+        # Add clickable time buttons
+        time_options = [
+            ("04:30", "04:30 🌄"),
+            ("05:00", "05:00 ⭐"),
+            ("06:00", "06:00 ☀️"),
+            ("07:00", "07:00 🌅")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
             markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_morning_time_{time_value.replace(':', '')}_{chat_id}"
+                )
             )
-        else:
-            markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
-            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+        )
         
         bot.edit_message_text(
             settings_text,
@@ -2771,7 +3286,7 @@ def callback_morning_time_presets(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("evening_time_presets"))
 def callback_evening_time_presets(call: types.CallbackQuery):
-    """Show preset times for evening azkar as information."""
+    """Show preset times for evening azkar with clickable time buttons."""
     try:
         # Extract chat_id from callback data if present
         chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
@@ -2788,34 +3303,55 @@ def callback_evening_time_presets(call: types.CallbackQuery):
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
                 return
+            # Show error if no chat_id
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
         
-        bot.answer_callback_query(call.id, "أوقات شائعة للمساء")
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        current_time = "18:00"
+        if chat_id:
+            settings = get_chat_settings(chat_id)
+            current_time = settings.get('evening_time', '18:00')
         
         settings_text = (
-            "🌙 *أوقات شائعة لأذكار المساء*\n\n"
-            "*الأوقات المقترحة:*\n"
+            "🌙 *تخصيص وقت أذكار المساء*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
             "• 15:30 - بعد صلاة العصر\n"
             "• 17:00 - قبل المغرب\n"
             "• 18:00 - الافتراضي\n"
             "• 19:00 - مساءً\n\n"
-            "*لتخصيص الوقت:*\n"
-            "استخدم الأمر في المجموعة:\n"
-            "`/settime evening HH:MM`\n\n"
-            "*مثال:*\n"
-            "`/settime evening 17:30`"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime evening HH:MM`"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         
-        # Add back button with chat_id if available
-        if chat_id:
+        # Add clickable time buttons
+        time_options = [
+            ("15:30", "15:30 🕌"),
+            ("17:00", "17:00 🌆"),
+            ("18:00", "18:00 ⭐"),
+            ("19:00", "19:00 🌙")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
             markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_evening_time_{time_value.replace(':', '')}_{chat_id}"
+                )
             )
-        else:
-            markup.add(
-                types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
-            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"morning_evening_settings_{chat_id}")
+        )
         
         bot.edit_message_text(
             settings_text,
@@ -2827,6 +3363,82 @@ def callback_evening_time_presets(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_evening_time_presets: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_morning_time_"))
+def callback_set_morning_time(call: types.CallbackQuery):
+    """Handle setting morning azkar time from preset buttons."""
+    try:
+        # Parse callback data: set_morning_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 5:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "0430"
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "morning_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت الصباح: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"morning_time_presets_{chat_id}"
+        callback_morning_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_morning_time: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_evening_time_"))
+def callback_set_evening_time(call: types.CallbackQuery):
+    """Handle setting evening azkar time from preset buttons."""
+    try:
+        # Parse callback data: set_evening_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 5:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "1530"
+        chat_id = int(parts[4] if len(parts) == 5 else parts[-1])  # Handle variable format
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "evening_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت المساء: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"evening_time_presets_{chat_id}"
+        callback_evening_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_evening_time: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -3498,6 +4110,11 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
                 types.InlineKeyboardButton("24 ساعة", callback_data=f"diverse_interval_{chat_id}_1440")
             )
             
+            # Add media format settings button
+            markup.add(
+                types.InlineKeyboardButton("🎨 إعدادات التنسيق", callback_data=f"diverse_media_format_{chat_id}")
+            )
+            
             # Add back button with chat_id encoded
             chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
             markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
@@ -3663,6 +4280,169 @@ def callback_toggle_diverse_azkar(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_diverse_azkar: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("diverse_media_format_"))
+def callback_diverse_media_format(call: types.CallbackQuery):
+    """
+    Handle callback for diverse azkar media format settings.
+    Format: diverse_media_format_{chat_id}
+    """
+    try:
+        # Parse callback data to extract chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        chat_id = int(parts[-1])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات التنسيق")
+        
+        # Get current settings
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        audio_status = "✅ مفعّل" if diverse_settings.get('enable_audio', 1) else "❌ معطّل"
+        images_status = "✅ مفعّل" if diverse_settings.get('enable_images', 1) else "❌ معطّل"
+        pdf_status = "✅ مفعّل" if diverse_settings.get('enable_pdf', 1) else "❌ معطّل"
+        text_status = "✅ مفعّل" if diverse_settings.get('enable_text', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "🎨 *إعدادات تنسيق الأدعية المتنوعة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• الصوت: {audio_status}\n"
+            f"• الصور: {images_status}\n"
+            f"• ملفات PDF: {pdf_status}\n"
+            f"• النص العادي: {text_status}\n\n"
+            "*ما هو تنسيق الإرسال؟*\n"
+            "يمكنك اختيار نوع أو أكثر من أنواع الوسائط التالية:\n\n"
+            "*🎵 الصوت:*\n"
+            "• ملفات صوتية للأدعية والقرآن\n"
+            "• تشغيل مباشر في التليجرام\n\n"
+            "*🖼️ الصور:*\n"
+            "• صور ملهمة مع الأدعية\n"
+            "• تصميمات جميلة للآيات\n\n"
+            "*📄 ملفات PDF:*\n"
+            "• كتب ومطويات\n"
+            "• نشرات دعوية\n\n"
+            "*📝 النص العادي:*\n"
+            "• نص بسيط بدون وسائط\n"
+            "• سهل القراءة والنسخ\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه لتفعيل أو تعطيل كل نوع"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Add toggle buttons for each media type
+        audio_icon = "✅" if diverse_settings.get('enable_audio', 1) else "❌"
+        images_icon = "✅" if diverse_settings.get('enable_images', 1) else "❌"
+        pdf_icon = "✅" if diverse_settings.get('enable_pdf', 1) else "❌"
+        text_icon = "✅" if diverse_settings.get('enable_text', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{audio_icon} الصوت", 
+                callback_data=f"toggle_diverse_audio_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{images_icon} الصور", 
+                callback_data=f"toggle_diverse_images_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{pdf_icon} ملفات PDF", 
+                callback_data=f"toggle_diverse_pdf_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{text_icon} النص العادي", 
+                callback_data=f"toggle_diverse_text_{chat_id}"
+            )
+        )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"diverse_azkar_settings_{chat_id}")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Diverse media format settings displayed for user {call.from_user.id} in chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_diverse_media_format: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_diverse_audio_") or 
+                                              call.data.startswith("toggle_diverse_images_") or
+                                              call.data.startswith("toggle_diverse_pdf_") or
+                                              call.data.startswith("toggle_diverse_text_"))
+def callback_toggle_diverse_media(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for diverse azkar media types.
+    Format: toggle_diverse_{type}_{chat_id}
+    """
+    try:
+        # Parse callback data
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        media_type = parts[2]  # 'audio', 'images', 'pdf', or 'text'
+        chat_id = int(parts[-1])
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Map media types to setting keys and names
+        setting_map = {
+            "audio": ("enable_audio", "الصوت"),
+            "images": ("enable_images", "الصور"),
+            "pdf": ("enable_pdf", "ملفات PDF"),
+            "text": ("enable_text", "النص العادي")
+        }
+        
+        if media_type not in setting_map:
+            bot.answer_callback_query(call.id, "⚠️ نوع غير معروف", show_alert=True)
+            return
+        
+        setting_key, setting_name = setting_map[media_type]
+        
+        # Get current settings and toggle
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        new_value = not diverse_settings.get(setting_key, 1)
+        update_diverse_azkar_setting(chat_id, setting_key, new_value)
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        # Refresh the media format settings view
+        call.data = f"diverse_media_format_{chat_id}"
+        callback_diverse_media_format(call)
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_diverse_media: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
