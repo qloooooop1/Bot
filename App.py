@@ -1048,8 +1048,8 @@ def setup_webhook():
         try:
             logger.info(f"Webhook setup attempt {attempt + 1}/{max_retries}")
             
-            # Remove existing webhook first
-            bot.remove_webhook(drop_pending_updates=True)
+            # Remove existing webhook first using delete_webhook which supports drop_pending_updates
+            bot.delete_webhook(drop_pending_updates=True)
             logger.info("Previous webhook removed successfully")
             
             # Small delay to ensure Telegram processes the removal
