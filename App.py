@@ -10,16 +10,27 @@ from flask import Flask, request, abort
 from telebot import types
 
 # توكن البوت الخاص بك
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # معرف القروب الوحيد الذي يعمل فيه البوت
-ALLOWED_CHAT_ID = int(os.environ.get('ALLOWED_CHAT_ID', '-1001224326322'))
+ALLOWED_CHAT_ID_STR = os.environ.get('ALLOWED_CHAT_ID')
+if not ALLOWED_CHAT_ID_STR:
+    raise ValueError("ALLOWED_CHAT_ID environment variable is required")
+
+try:
+    ALLOWED_CHAT_ID = int(ALLOWED_CHAT_ID_STR)
+except ValueError:
+    raise ValueError("ALLOWED_CHAT_ID must be a valid integer")
 
 # قاعدة بيانات لتتبع المخالفات والإعدادات
 conn = sqlite3.connect('bot_data.db', check_same_thread=False)
 cursor = conn.cursor()
+db_lock = threading.Lock()  # Lock for thread-safe database operations
 
 # إنشاء جداول قاعدة البيانات
 cursor.execute('''CREATE TABLE IF NOT EXISTS violations
@@ -56,25 +67,34 @@ azkar_data = load_azkar_data()
 
 # دالة الحصول على إعدادات المجموعة
 def get_settings(chat_id):
-    cursor.execute('SELECT * FROM settings WHERE chat_id = ?', (chat_id,))
-    result = cursor.fetchone()
-    if not result:
-        cursor.execute('''INSERT INTO settings 
-                         (chat_id, azkar_enabled, delete_service_messages, interval_hours, phone_detection_enabled)
-                         VALUES (?, 1, 0, 2, 1)''', (chat_id,))
-        conn.commit()
-        return {'azkar_enabled': 1, 'delete_service_messages': 0, 'interval_hours': 2, 'phone_detection_enabled': 1}
-    return {
-        'azkar_enabled': result[1],
-        'delete_service_messages': result[2],
-        'interval_hours': result[3],
-        'phone_detection_enabled': result[4]
-    }
+    with db_lock:
+        cursor.execute('SELECT * FROM settings WHERE chat_id = ?', (chat_id,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.execute('''INSERT INTO settings 
+                             (chat_id, azkar_enabled, delete_service_messages, interval_hours, phone_detection_enabled)
+                             VALUES (?, 1, 0, 2, 1)''', (chat_id,))
+            conn.commit()
+            return {'azkar_enabled': 1, 'delete_service_messages': 0, 'interval_hours': 2, 'phone_detection_enabled': 1}
+        return {
+            'azkar_enabled': result[1],
+            'delete_service_messages': result[2],
+            'interval_hours': result[3],
+            'phone_detection_enabled': result[4]
+        }
 
 # دالة تحديث إعداد معين
 def update_setting(chat_id, setting_name, value):
-    cursor.execute(f'UPDATE settings SET {setting_name} = ? WHERE chat_id = ?', (value, chat_id))
-    conn.commit()
+    # Whitelist of allowed column names to prevent SQL injection
+    allowed_settings = ['azkar_enabled', 'delete_service_messages', 'interval_hours', 'phone_detection_enabled']
+    if setting_name not in allowed_settings:
+        raise ValueError(f"Invalid setting name: {setting_name}")
+    
+    # Use parameterized query with validated column name
+    with db_lock:
+        query = f'UPDATE settings SET {setting_name} = ? WHERE chat_id = ?'
+        cursor.execute(query, (value, chat_id))
+        conn.commit()
 
 # دالة التحقق من صلاحيات الإدارة
 def is_admin(chat_id, user_id):
@@ -123,11 +143,12 @@ def post_azkar(chat_id):
     try:
         bot.send_message(chat_id, message_text)
         # تحديث آخر وقت نشر
-        cursor.execute('''INSERT OR REPLACE INTO azkar_schedule 
-                         (chat_id, last_posted, current_type) 
-                         VALUES (?, ?, ?)''', 
-                      (chat_id, datetime.now().isoformat(), azkar_type))
-        conn.commit()
+        with db_lock:
+            cursor.execute('''INSERT OR REPLACE INTO azkar_schedule 
+                             (chat_id, last_posted, current_type) 
+                             VALUES (?, ?, ?)''', 
+                          (chat_id, datetime.now().isoformat(), azkar_type))
+            conn.commit()
     except Exception as e:
         print(f"خطأ في نشر الأذكار: {e}")
 
@@ -137,13 +158,15 @@ def schedule_azkar():
     while True:
         try:
             # جلب جميع المجموعات التي فعّلت الأذكار
-            cursor.execute('SELECT chat_id, interval_hours FROM settings WHERE azkar_enabled = 1')
-            chats = cursor.fetchall()
+            with db_lock:
+                cursor.execute('SELECT chat_id, interval_hours FROM settings WHERE azkar_enabled = 1')
+                chats = cursor.fetchall()
             
             for chat_id, interval_hours in chats:
                 # التحقق من آخر وقت نشر
-                cursor.execute('SELECT last_posted FROM azkar_schedule WHERE chat_id = ?', (chat_id,))
-                result = cursor.fetchone()
+                with db_lock:
+                    cursor.execute('SELECT last_posted FROM azkar_schedule WHERE chat_id = ?', (chat_id,))
+                    result = cursor.fetchone()
                 
                 should_post = False
                 if not result:
@@ -309,11 +332,12 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, "✅ تم نشر الذكر")
     
     elif call.data == "show_stats":
-        cursor.execute('SELECT COUNT(*) FROM violations')
-        violation_count = cursor.fetchone()[0]
-        cursor.execute('SELECT last_posted FROM azkar_schedule WHERE chat_id = ?', (chat_id,))
-        result = cursor.fetchone()
-        last_posted = result[0] if result else "لم يتم النشر بعد"
+        with db_lock:
+            cursor.execute('SELECT COUNT(*) FROM violations')
+            violation_count = cursor.fetchone()[0]
+            cursor.execute('SELECT last_posted FROM azkar_schedule WHERE chat_id = ?', (chat_id,))
+            result = cursor.fetchone()
+            last_posted = result[0] if result else "لم يتم النشر بعد"
         
         stats_text = f"📊 **إحصائيات البوت**\n\n"
         stats_text += f"🚨 عدد المخالفات المسجلة: {violation_count}\n"
@@ -378,38 +402,6 @@ def delete_service_messages(message):
         except Exception as e:
             print(f"خطأ في حذف رسالة الخدمة: {e}")
 
-# دالة كشف أذكى للأرقام المخفية
-def extract_hidden_phone(text):
-    if not text:
-        return False
-    
-    # استبدال شائع للحروف والرموز العربية والإنجليزية اللي يستخدمونها للتخفي
-    replacements = {
-        'o': '0', 'O': '0', 'i': '1', 'I': '1', 'l': '1', 'L': '1',
-        's': '5', 'S': '5', 'a': '4', 'A': '4', 'e': '3', 'E': '3',
-        't': '7', 'T': '7', 'g': '9', 'G': '9', 'b': '8', 'B': '8',
-        'z': '2', 'Z': '2', 'ق': '0', 'ه': '0', '٥': '5', '٤': '4',
-        '٣': '3', '٧': '7', '٨': '8', '٩': '9', '٠': '0', '١': '1', '٢': '2'
-    }
-    
-    cleaned = text.lower()
-    for old, new in replacements.items():
-        cleaned = cleaned.replace(old, new)
-    
-    # إزالة جميع الرموز غير الأرقام
-    digits_only = re.sub(r'\D', '', cleaned)
-    
-    # كشف أي تسلسل من 9 أرقام فأكثر
-    if re.search(r'\d{9,}', digits_only):
-        return True
-    
-    # كشف إضافي للأرقام المفصولة بمسافات أو رموز
-    spaced = re.sub(r'[\s\-\.\*\_\+\(\)\[\]]', '', cleaned)
-    if re.search(r'\d{9,}', spaced):
-        return True
-    
-    return False
-
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -456,9 +448,10 @@ def handle_message(message):
                 bot.delete_message(chat_id, message.message_id)
                 
                 # جلب عدد المخالفات
-                cursor.execute('SELECT count FROM violations WHERE user_id = ?', (user_id,))
-                result = cursor.fetchone()
-                violation_count = result[0] + 1 if result else 1
+                with db_lock:
+                    cursor.execute('SELECT count FROM violations WHERE user_id = ?', (user_id,))
+                    result = cursor.fetchone()
+                    violation_count = result[0] + 1 if result else 1
                 
                 if violation_count == 1:
                     # كتم ليوم واحد (كتم كامل)
@@ -471,7 +464,15 @@ def handle_message(message):
                     
                     # إرسال إشعار يُحذف تلقائياً بعد دقيقتين
                     notice = bot.send_message(chat_id, f"🚨 تم كتم العضو {display_name} لمدة يوم واحد بسبب إرسال رقم جوال ممنوع.")
-                    threading.Timer(120, lambda: bot.delete_message(chat_id, notice.message_id)).start()
+                    
+                    # حذف الإشعار بعد دقيقتين مع معالجة الأخطاء
+                    def delete_notice():
+                        try:
+                            bot.delete_message(chat_id, notice.message_id)
+                        except Exception as e:
+                            print(f"خطأ في حذف الإشعار: {e}")
+                    
+                    threading.Timer(120, delete_notice).start()
                     
                 elif violation_count >= 2:
                     # حظر دائم
@@ -479,12 +480,21 @@ def handle_message(message):
                     
                     # إرسال إشعار يُحذف تلقائياً بعد دقيقتين
                     notice = bot.send_message(chat_id, f"🚨 تم حظر العضو {display_name} نهائياً بسبب تكرار إرسال أرقام جوالات.")
-                    threading.Timer(120, lambda: bot.delete_message(chat_id, notice.message_id)).start()
+                    
+                    # حذف الإشعار بعد دقيقتين مع معالجة الأخطاء
+                    def delete_ban_notice():
+                        try:
+                            bot.delete_message(chat_id, notice.message_id)
+                        except Exception as e:
+                            print(f"خطأ في حذف الإشعار: {e}")
+                    
+                    threading.Timer(120, delete_ban_notice).start()
                 
                 # حفظ عدد المخالفات
-                cursor.execute('INSERT OR REPLACE INTO violations (user_id, count) VALUES (?, ?)',
-                               (user_id, violation_count))
-                conn.commit()
+                with db_lock:
+                    cursor.execute('INSERT OR REPLACE INTO violations (user_id, count) VALUES (?, ?)',
+                                   (user_id, violation_count))
+                    conn.commit()
                 
             except Exception as e:
                 print(f"خطأ: {e}")
