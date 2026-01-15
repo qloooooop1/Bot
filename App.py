@@ -851,81 +851,98 @@ def disable_bot(message):
 
 @bot.message_handler(commands=['status'])
 def show_status(message):
-    """عرض حالة البوت"""
+    """عرض حالة البوت بتصميم محسّن"""
     settings = get_chat_settings(message.chat.id)
     
-    status = f"""📊 حالة البوت في هذه المجموعة:
+    status = f"""📊 *حالة البوت في هذه المجموعة*
 
-🔰 الحالة: {'مفعّل ✅' if settings['is_admin'] else 'معطّل ❌'}
+🔰 *الحالة العامة:* {'🟢 مفعّل' if settings['is_admin'] else '🔴 معطّل'}
 
-⏰ الإعدادات:
-• أذكار الصباح ({settings['morning_time']}): {'✅' if settings['morning_azkar'] else '❌'}
-• أذكار المساء ({settings['evening_time']}): {'✅' if settings['evening_azkar'] else '❌'}
-• سورة الكهف: {'✅' if settings['friday_sura'] else '❌'}
-• أدعية الجمعة: {'✅' if settings['friday_dua'] else '❌'}
-• رسالة النوم ({settings['sleep_time']}): {'✅' if settings['sleep_image'] else '❌'}
-• محتوى عشوائي: {'✅' if settings['random_content'] else '❌'}
+📅 *الأوقات المجدولة:*
+🌅 أذكار الصباح ({settings['morning_time']}): {'✅ مفعّل' if settings['morning_azkar'] else '❌ معطّل'}
+🌙 أذكار المساء ({settings['evening_time']}): {'✅ مفعّل' if settings['evening_azkar'] else '❌ معطّل'}
+😴 رسالة النوم ({settings['sleep_time']}): {'✅ مفعّل' if settings['sleep_image'] else '❌ معطّل'}
+📿 سورة الكهف (الجمعة 9:00): {'✅ مفعّل' if settings['friday_sura'] else '❌ معطّل'}
+🕌 أدعية الجمعة (الجمعة 10:00): {'✅ مفعّل' if settings['friday_dua'] else '❌ معطّل'}
 
-⏱️ الفاصل الزمني: {settings['content_interval']} دقيقة
+🎲 *المحتوى المتنوع:* {'✅ مفعّل' if settings['random_content'] else '❌ معطّل'}
+⏱ *الفاصل الزمني:* {settings['content_interval']} دقيقة
 
-استخدم /settings لتغيير الإعدادات"""
+📚 *المحتوى المتاح:*
+• 12+ ذكر للصباح والمساء
+• 40+ دعاء مأثور
+• 40+ آية قرآنية
+• 40+ حديث نبوي شريف
+• محتوى خاص بالمناسبات الإسلامية
+
+⚙️ استخدم /settings لتغيير الإعدادات"""
     
-    bot.reply_to(message, status)
+    bot.reply_to(message, status, parse_mode='Markdown')
 
 def create_settings_markup(chat_id):
-    """إنشاء لوحة الإعدادات"""
+    """إنشاء لوحة الإعدادات المحسّنة"""
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     settings = get_chat_settings(chat_id)
     
-    # أزرار تفعيل/تعطيل الميزات
+    # أزرار تفعيل/تعطيل الميزات - تصميم محسّن
     markup.add(
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['morning_azkar'] else '❌'} أذكار الصباح",
+            f"{'🌅 ✓' if settings['morning_azkar'] else '🌅 ✗'} أذكار الصباح",
             callback_data='toggle_morning'
         ),
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['evening_azkar'] else '❌'} أذكار المساء",
+            f"{'🌙 ✓' if settings['evening_azkar'] else '🌙 ✗'} أذكار المساء",
             callback_data='toggle_evening'
         )
     )
     
     markup.add(
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['friday_sura'] else '❌'} سورة الكهف",
+            f"{'📿 ✓' if settings['friday_sura'] else '📿 ✗'} سورة الكهف",
             callback_data='toggle_kahf'
         ),
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['friday_dua'] else '❌'} أدعية الجمعة",
+            f"{'🕌 ✓' if settings['friday_dua'] else '🕌 ✗'} أدعية الجمعة",
             callback_data='toggle_friday_dua'
         )
     )
     
     markup.add(
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['sleep_image'] else '❌'} رسالة النوم",
+            f"{'😴 ✓' if settings['sleep_image'] else '😴 ✗'} رسالة النوم",
             callback_data='toggle_sleep'
         ),
         telebot.types.InlineKeyboardButton(
-            f"{'✅' if settings['random_content'] else '❌'} محتوى عشوائي",
+            f"{'🎲 ✓' if settings['random_content'] else '🎲 ✗'} محتوى متنوع",
             callback_data='toggle_random'
         )
     )
     
+    # أزرار الإعدادات
     markup.add(
         telebot.types.InlineKeyboardButton(
-            "⏱️ تعديل الأوقات",
+            "⏰ تعديل الأوقات",
             callback_data='edit_times'
         ),
         telebot.types.InlineKeyboardButton(
-            "⏲️ فاصل المحتوى",
+            f"⏱ الفاصل: {settings['content_interval']}د",
             callback_data='edit_interval'
         )
     )
     
+    # زر حفظ وإعادة تحميل
     markup.add(
         telebot.types.InlineKeyboardButton(
-            "🔄 حفظ وإعادة تحميل",
+            "🔄 حفظ وتطبيق التغييرات",
             callback_data='reload_schedule'
+        )
+    )
+    
+    # زر معلومات إضافية
+    markup.add(
+        telebot.types.InlineKeyboardButton(
+            "ℹ️ معلومات الأوقات",
+            callback_data='show_times_info'
         )
     )
     
@@ -933,7 +950,7 @@ def create_settings_markup(chat_id):
 
 @bot.message_handler(commands=['settings'])
 def show_settings(message):
-    """عرض لوحة التحكم"""
+    """عرض لوحة التحكم المحسّنة"""
     if message.chat.type not in ['group', 'supergroup']:
         bot.reply_to(message, "❌ هذا الأمر يعمل فقط في المجموعات")
         return
@@ -942,17 +959,34 @@ def show_settings(message):
         bot.reply_to(message, "❌ هذا الأمر للمشرفين فقط")
         return
     
+    settings = get_chat_settings(message.chat.id)
     markup = create_settings_markup(message.chat.id)
+    
+    settings_text = f"""⚙️ *لوحة التحكم الرئيسية*
+
+📊 حالة البوت: {'🟢 مفعّل' if settings['is_admin'] else '🔴 معطّل'}
+
+📅 *الأوقات المجدولة:*
+🌅 الصباح: {settings['morning_time']}
+🌙 المساء: {settings['evening_time']}
+😴 النوم: {settings['sleep_time']}
+📿 الكهف: الجمعة 9:00
+🕌 دعاء الجمعة: الجمعة 10:00
+
+⏱ *الفاصل الزمني للمحتوى:* {settings['content_interval']} دقيقة
+
+💡 *اضغط على الأزرار أدناه للتحكم بالميزات*"""
     
     bot.send_message(
         message.chat.id,
-        "⚙️ لوحة التحكم\n\nاضغط على الأزرار لتفعيل أو تعطيل الميزات:",
-        reply_markup=markup
+        settings_text,
+        reply_markup=markup,
+        parse_mode='Markdown'
     )
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    """معالج الأزرار"""
+    """معالج الأزرار المحسّن"""
     if not is_user_admin(call.message.chat.id, call.from_user.id):
         bot.answer_callback_query(call.id, "❌ هذا الأمر للمشرفين فقط")
         return
@@ -977,19 +1011,74 @@ def callback_handler(call):
         conn.commit()
         bot.answer_callback_query(call.id, "✅ تم التحديث")
         
-        # تحديث الأزرار
+        # تحديث الأزرار والنص
+        settings = get_chat_settings(chat_id)
         markup = create_settings_markup(chat_id)
-        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
+        
+        settings_text = f"""⚙️ *لوحة التحكم الرئيسية*
+
+📊 حالة البوت: {'🟢 مفعّل' if settings['is_admin'] else '🔴 معطّل'}
+
+📅 *الأوقات المجدولة:*
+🌅 الصباح: {settings['morning_time']}
+🌙 المساء: {settings['evening_time']}
+😴 النوم: {settings['sleep_time']}
+📿 الكهف: الجمعة 9:00
+🕌 دعاء الجمعة: الجمعة 10:00
+
+⏱ *الفاصل الزمني للمحتوى:* {settings['content_interval']} دقيقة
+
+💡 *اضغط على الأزرار أدناه للتحكم بالميزات*"""
+        
+        try:
+            bot.edit_message_text(
+                settings_text,
+                chat_id,
+                call.message.message_id,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+        except:
+            # في حالة لم يتغير النص
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
         
     elif call.data == 'reload_schedule':
         schedule_azkar_jobs()
-        bot.answer_callback_query(call.id, "✅ تم إعادة تحميل الجدول")
+        bot.answer_callback_query(call.id, "✅ تم حفظ التغييرات وإعادة تحميل الجدول!")
         
     elif call.data == 'edit_times':
-        bot.answer_callback_query(call.id, "استخدم الأمر: /settime <نوع> <الوقت>\nمثال: /settime morning 06:00")
+        bot.answer_callback_query(call.id, "استخدم الأمر:\n/settime <نوع> <الوقت>\n\nمثال: /settime morning 06:00", show_alert=True)
         
     elif call.data == 'edit_interval':
-        bot.answer_callback_query(call.id, "استخدم الأمر: /setinterval <دقائق>\nمثال: /setinterval 120")
+        bot.answer_callback_query(call.id, "استخدم الأمر:\n/setinterval <دقائق>\n\nمثال: /setinterval 120", show_alert=True)
+    
+    elif call.data == 'show_times_info':
+        settings = get_chat_settings(chat_id)
+        info_text = f"""📅 *معلومات الأوقات المجدولة*
+
+🌅 *أذكار الصباح:* {settings['morning_time']}
+   • يتم إرسال 12+ ذكر من أذكار الصباح
+
+🌙 *أذكار المساء:* {settings['evening_time']}
+   • يتم إرسال 12+ ذكر من أذكار المساء
+
+😴 *رسالة قبل النوم:* {settings['sleep_time']}
+   • المعوذات وأذكار النوم
+
+📿 *سورة الكهف:* الجمعة 9:00 صباحاً
+   • تذكير بقراءة سورة الكهف
+
+🕌 *أدعية الجمعة:* الجمعة 10:00 صباحاً
+   • أدعية مختارة ليوم الجمعة
+
+🎲 *المحتوى المتنوع:* كل {settings['content_interval']} دقيقة
+   • 40+ دعاء، 40+ آية، 40+ حديث
+   • محتوى خاص بيوم الجمعة
+
+💡 استخدم /settime و /setinterval للتعديل"""
+        
+        bot.answer_callback_query(call.id)
+        bot.send_message(chat_id, info_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['settime'])
 def set_time(message):
