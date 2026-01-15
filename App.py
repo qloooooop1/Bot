@@ -58,11 +58,11 @@ if DATABASE_URL:
     # psycopg2 requires "postgresql://"
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-        logger.info(f"✓ DATABASE_URL format corrected (postgres:// -> postgresql://)")
+        logger.info(f"✓ DATABASE_URL format corrected to postgresql://")
     elif DATABASE_URL.startswith("psql://"):
         # Handle incorrect "psql://" format
         DATABASE_URL = DATABASE_URL.replace("psql://", "postgresql://", 1)
-        logger.info(f"✓ DATABASE_URL format corrected (psql:// -> postgresql://)")
+        logger.info(f"✓ DATABASE_URL format corrected to postgresql://")
     logger.info(f"✓ DATABASE_URL configured for PostgreSQL")
 else:
     logger.info("ℹ️ DATABASE_URL not set, PostgreSQL features disabled")
