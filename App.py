@@ -55,6 +55,7 @@ TIMEZONE = pytz.timezone("Asia/Riyadh")
 
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'bot-8c0e.onrender.com')}{WEBHOOK_PATH}"
+WEBHOOK_ERROR_THRESHOLD_SECONDS = 3600  # Only reconfigure webhook if error occurred within last hour
 logger.info(f"WEBHOOK_URL configured: {WEBHOOK_URL}")
 
 # ────────────────────────────────────────────────
@@ -1083,8 +1084,8 @@ def verify_webhook():
             setup_webhook()
         elif info.last_error_message:
             logger.warning(f"Webhook has errors: {info.last_error_message}")
-            # Only reconfigure if error is recent (within last hour)
-            if info.last_error_date and (time.time() - info.last_error_date < 3600):
+            # Only reconfigure if error is recent (within threshold)
+            if info.last_error_date and (time.time() - info.last_error_date < WEBHOOK_ERROR_THRESHOLD_SECONDS):
                 logger.info("Recent webhook error detected, reconfiguring...")
                 setup_webhook()
         else:
