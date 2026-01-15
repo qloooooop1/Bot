@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "description": "قاعدة بيانات الصور المستخدمة مع الأذكار",
+  "note": "يجب ملء file_id بمعرف الملف الفعلي من تيليجرام",
+  "images": [
+    {
+      "id": "img_hajj_001",
+      "category": "حج",
+      "url": "",
+      "file_id": "",
+      "title": "الكعبة المشرفة",
+      "description": "صورة للكعبة",
+      "enabled": true
+    },
+    {
+      "id": "img_hajj_002",
+      "category": "حج",
+      "url": "",
+      "file_id": "",
+      "title": "جبل عرفات",
+      "description": "صورة لجبل عرفات",
+      "enabled": true
+    },
+    {
+      "id": "img_eid_001",
+      "category": "عيد",
+      "url": "",
+      "file_id": "",
+      "title": "تهنئة بالعيد",
+      "description": "بطاقة تهنئة بالعيد",
+      "enabled": true
+    },
+    {
+      "id": "img_eid_002",
+      "category": "عيد",
+      "url": "",
+      "file_id": "",
+      "title": "هلال العيد",
+      "description": "صورة الهلال",
+      "enabled": true
+    },
+    {
+      "id": "img_ramadan_001",
+      "category": "رمضان",
+      "url": "",
+      "file_id": "",
+      "title": "هلال رمضان",
+      "description": "هلال شهر رمضان المبارك",
+      "enabled": true
+    },
+    {
+      "id": "img_ramadan_002",
+      "category": "رمضان",
+      "url": "",
+      "file_id": "",
+      "title": "ليلة القدر",
+      "description": "صورة لليلة القدر",
+      "enabled": true
+    },
+    {
+      "id": "img_islamic_001",
+      "category": "إسلامي",
+      "url": "",
+      "file_id": "",
+      "title": "مسجد",
+      "description": "صورة مسجد إسلامي",
+      "enabled": true
+    },
+    {
+      "id": "img_islamic_002",
+      "category": "إسلامي",
+      "url": "",
+      "file_id": "",
+      "title": "قرآن كريم",
+      "description": "صورة للقرآن الكريم",
+      "enabled": true
+    },
+    {
+      "id": "img_islamic_003",
+      "category": "إسلامي",
+      "url": "",
+      "file_id": "",
+      "title": "سبحة",
+      "description": "صورة سبحة للتسبيح",
+      "enabled": true
+    }
+  ]
+}

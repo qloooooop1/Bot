@@ -108,6 +108,8 @@ DB_FILE = "bot_settings.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Main chat settings table
     c.execute('''
         CREATE TABLE IF NOT EXISTS chat_settings (
             chat_id INTEGER PRIMARY KEY,
@@ -128,9 +130,49 @@ def init_db():
             send_media_with_friday INTEGER DEFAULT 0
         )
     ''')
+    
+    # Diverse azkar settings table for interval-based sending
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS diverse_azkar_settings (
+            chat_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0,
+            interval_minutes INTEGER DEFAULT 60,
+            media_type TEXT DEFAULT 'text',
+            last_sent_timestamp INTEGER DEFAULT 0,
+            FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+        )
+    ''')
+    
+    # Ramadan settings table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ramadan_settings (
+            chat_id INTEGER PRIMARY KEY,
+            ramadan_enabled INTEGER DEFAULT 1,
+            laylat_alqadr_enabled INTEGER DEFAULT 1,
+            last_ten_days_enabled INTEGER DEFAULT 1,
+            iftar_dua_enabled INTEGER DEFAULT 1,
+            media_type TEXT DEFAULT 'images',
+            FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+        )
+    ''')
+    
+    # Hajj and Eid settings table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS hajj_eid_settings (
+            chat_id INTEGER PRIMARY KEY,
+            arafah_day_enabled INTEGER DEFAULT 1,
+            eid_eve_enabled INTEGER DEFAULT 1,
+            eid_day_enabled INTEGER DEFAULT 1,
+            eid_adha_enabled INTEGER DEFAULT 1,
+            hajj_enabled INTEGER DEFAULT 1,
+            media_type TEXT DEFAULT 'images',
+            FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
-    logger.info("Database initialized")
+    logger.info("Database initialized with all tables")
 
 init_db()
 
@@ -260,6 +302,171 @@ def update_chat_setting(chat_id: int, key: str, value):
     conn.commit()
     conn.close()
     logger.info(f"Updated {key} = {value} for chat {chat_id}")
+
+# ────────────────────────────────────────────────
+#               Diverse Azkar Settings Functions
+# ────────────────────────────────────────────────
+
+def get_diverse_azkar_settings(chat_id: int) -> dict:
+    """Get diverse azkar settings for a chat, creating default if not exists."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    
+    if row is None:
+        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+        conn.close()
+        return get_diverse_azkar_settings(chat_id)
+    
+    conn.close()
+    return {
+        "chat_id": row[0],
+        "enabled": bool(row[1]),
+        "interval_minutes": row[2],
+        "media_type": row[3],
+        "last_sent_timestamp": row[4]
+    }
+
+def update_diverse_azkar_setting(chat_id: int, key: str, value):
+    """Update a specific diverse azkar setting."""
+    allowed_keys = {"enabled", "interval_minutes", "media_type", "last_sent_timestamp"}
+    if key not in allowed_keys:
+        logger.error(f"Invalid diverse azkar setting key: {key}")
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Ensure settings exist
+    c.execute("SELECT chat_id FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
+    if not c.fetchone():
+        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
+    
+    # Convert value based on key type
+    if key == "media_type":
+        final_value = value
+    else:
+        final_value = int(value)
+    
+    c.execute(f"UPDATE diverse_azkar_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
+
+# ────────────────────────────────────────────────
+#               Ramadan Settings Functions
+# ────────────────────────────────────────────────
+
+def get_ramadan_settings(chat_id: int) -> dict:
+    """Get Ramadan settings for a chat, creating default if not exists."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    
+    if row is None:
+        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+        conn.close()
+        return get_ramadan_settings(chat_id)
+    
+    conn.close()
+    return {
+        "chat_id": row[0],
+        "ramadan_enabled": bool(row[1]),
+        "laylat_alqadr_enabled": bool(row[2]),
+        "last_ten_days_enabled": bool(row[3]),
+        "iftar_dua_enabled": bool(row[4]),
+        "media_type": row[5]
+    }
+
+def update_ramadan_setting(chat_id: int, key: str, value):
+    """Update a specific Ramadan setting."""
+    allowed_keys = {
+        "ramadan_enabled", "laylat_alqadr_enabled",
+        "last_ten_days_enabled", "iftar_dua_enabled", "media_type"
+    }
+    if key not in allowed_keys:
+        logger.error(f"Invalid ramadan setting key: {key}")
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Ensure settings exist
+    c.execute("SELECT chat_id FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
+    if not c.fetchone():
+        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
+    
+    # Convert value based on key type
+    if key == "media_type":
+        final_value = value
+    else:
+        final_value = int(value)
+    
+    c.execute(f"UPDATE ramadan_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
+
+# ────────────────────────────────────────────────
+#               Hajj & Eid Settings Functions
+# ────────────────────────────────────────────────
+
+def get_hajj_eid_settings(chat_id: int) -> dict:
+    """Get Hajj and Eid settings for a chat, creating default if not exists."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    
+    if row is None:
+        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+        conn.close()
+        return get_hajj_eid_settings(chat_id)
+    
+    conn.close()
+    return {
+        "chat_id": row[0],
+        "arafah_day_enabled": bool(row[1]),
+        "eid_eve_enabled": bool(row[2]),
+        "eid_day_enabled": bool(row[3]),
+        "eid_adha_enabled": bool(row[4]),
+        "hajj_enabled": bool(row[5]),
+        "media_type": row[6]
+    }
+
+def update_hajj_eid_setting(chat_id: int, key: str, value):
+    """Update a specific Hajj/Eid setting."""
+    allowed_keys = {
+        "arafah_day_enabled", "eid_eve_enabled", "eid_day_enabled",
+        "eid_adha_enabled", "hajj_enabled", "media_type"
+    }
+    if key not in allowed_keys:
+        logger.error(f"Invalid hajj_eid setting key: {key}")
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Ensure settings exist
+    c.execute("SELECT chat_id FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
+    if not c.fetchone():
+        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
+    
+    # Convert value based on key type
+    if key == "media_type":
+        final_value = value
+    else:
+        final_value = int(value)
+    
+    c.execute(f"UPDATE hajj_eid_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
@@ -534,6 +741,157 @@ def update_media_database(media_item: dict):
         return False
 
 # ────────────────────────────────────────────────
+#               Diverse Azkar & Specialized Media Functions
+# ────────────────────────────────────────────────
+
+def load_diverse_azkar():
+    """
+    Load diverse azkar from JSON file.
+    
+    Returns:
+        list: List of azkar items with type, text, reference, and category
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'azkar', 'diverse_azkar.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('azkar', [])
+    except Exception as e:
+        logger.error(f"Error loading diverse_azkar.json: {e}")
+        return []
+
+def get_random_diverse_azkar():
+    """
+    Get a random diverse azkar item.
+    
+    Returns:
+        str: Formatted azkar message or None if error
+    """
+    try:
+        azkar_list = load_diverse_azkar()
+        if not azkar_list:
+            return None
+        
+        item = random.choice(azkar_list)
+        
+        # Format based on type
+        type_icons = {
+            'dua': '🤲',
+            'ayah': '📖',
+            'hadith': '✨'
+        }
+        
+        icon = type_icons.get(item.get('type', 'dua'), '✨')
+        text = item.get('text', '')
+        reference = item.get('reference', '')
+        
+        msg = f"{icon} *الأدعية والأذكار المتنوعة*\n\n{text}"
+        if reference:
+            msg += f"\n\n{reference}"
+        
+        return msg
+    except Exception as e:
+        logger.error(f"Error getting random diverse azkar: {e}")
+        return None
+
+def load_audio_database():
+    """Load audio database from JSON file."""
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'audio.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        logger.info("Audio database loaded successfully")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading audio database: {e}")
+        return {"audio": []}
+
+def load_images_database():
+    """Load images database from JSON file."""
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'images.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        logger.info("Images database loaded successfully")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading images database: {e}")
+        return {"images": []}
+
+def get_random_media_by_category(category: str, media_type: str = "all"):
+    """
+    Get random media item filtered by category (e.g., 'حج', 'رمضان', 'عيد').
+    
+    Args:
+        category (str): Category to filter by
+        media_type (str): Type of media - 'images', 'audio', 'all'
+        
+    Returns:
+        dict: Random media item or None
+    """
+    try:
+        media_items = []
+        
+        if media_type in ["images", "all"]:
+            img_db = load_images_database()
+            for item in img_db.get("images", []):
+                if item.get("enabled", True) and item.get("category") == category:
+                    if item.get("file_id") and item.get("file_id").strip():
+                        media_items.append({**item, "media_type": "photo"})
+        
+        if media_type in ["audio", "all"]:
+            audio_db = load_audio_database()
+            for item in audio_db.get("audio", []):
+                if item.get("enabled", True) and item.get("category") == category:
+                    if item.get("file_id") and item.get("file_id").strip():
+                        media_items.append({**item, "media_type": "audio"})
+        
+        if not media_items:
+            logger.debug(f"No media found for category: {category}")
+            return None
+        
+        return random.choice(media_items)
+        
+    except Exception as e:
+        logger.error(f"Error getting media by category: {e}")
+        return None
+
+def send_diverse_azkar(chat_id: int):
+    """
+    Send a random diverse azkar to a chat.
+    
+    Args:
+        chat_id (int): Chat ID to send to
+    """
+    try:
+        settings = get_diverse_azkar_settings(chat_id)
+        
+        if not settings["enabled"]:
+            return
+        
+        msg = get_random_diverse_azkar()
+        if not msg:
+            logger.warning(f"No diverse azkar available for chat {chat_id}")
+            return
+        
+        # Check if media should be sent
+        media_type = settings.get("media_type", "text")
+        
+        if media_type != "text":
+            # Try to send with media
+            send_media_with_caption(chat_id, msg, media_type)
+        else:
+            # Send text only
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+        
+        # Update last sent timestamp
+        update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
+        logger.info(f"Sent diverse azkar to chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
+
+# ────────────────────────────────────────────────
 #               Content - أذكار الصباح
 # ────────────────────────────────────────────────
 
@@ -797,6 +1155,19 @@ def schedule_chat_jobs(chat_id: int):
                 )
             except (ValueError, AttributeError) as e:
                 logger.error(f"Invalid sleep time for {chat_id}: {e}")
+        
+        # Diverse Azkar (interval-based)
+        diverse_settings = get_diverse_azkar_settings(chat_id)
+        if diverse_settings["enabled"] and diverse_settings["interval_minutes"] > 0:
+            scheduler.add_job(
+                send_diverse_azkar,
+                'interval',
+                minutes=diverse_settings["interval_minutes"],
+                args=[chat_id],
+                id=f"diverse_azkar_{chat_id}",
+                replace_existing=True
+            )
+            logger.info(f"Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}")
 
         logger.info(f"Scheduled jobs for chat {chat_id}")
     except Exception as e:
@@ -1173,6 +1544,10 @@ def callback_advanced_settings(call: types.CallbackQuery):
             "⚙️ *الإعدادات المتقدمة*\n\n"
             "*إعدادات الوسائط:*\n"
             "تفعيل/تعطيل إرسال الوسائط مع الأذكار\n\n"
+            "*الأدعية المتنوعة:*\n"
+            "إرسال أدعية وآيات وأحاديث بشكل دوري\n\n"
+            "*إعدادات رمضان والحج:*\n"
+            "تخصيص الأذكار الخاصة بالمناسبات\n\n"
             "*إعدادات المواعيد:*\n"
             "تخصيص أوقات إرسال الأذكار\n\n"
             "*ملاحظة:* هذه الإعدادات تطبق على جميع المجموعات\n"
@@ -1183,6 +1558,9 @@ def callback_advanced_settings(call: types.CallbackQuery):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
+            types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
+            types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
+            types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
             types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
@@ -1344,6 +1722,213 @@ def callback_schedule_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_schedule_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "diverse_azkar_settings")
+def callback_diverse_azkar_settings(call: types.CallbackQuery):
+    """
+    Handle callback for diverse azkar settings panel.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات الأدعية المتنوعة")
+        
+        settings_text = (
+            "✨ *إعدادات الأدعية المتنوعة*\n\n"
+            "*ما هي الأدعية المتنوعة؟*\n"
+            "مجموعة من الأدعية والآيات والأحاديث المتنوعة "
+            "يتم إرسالها بشكل دوري حسب الفاصل الزمني المحدد\n\n"
+            "*الفواصل الزمنية المتاحة:*\n"
+            "• دقيقة واحدة\n"
+            "• 5 دقائق\n"
+            "• 15 دقيقة\n"
+            "• ساعة واحدة\n"
+            "• ساعتين\n"
+            "• 4 ساعات\n"
+            "• 8 ساعات\n"
+            "• 12 ساعة\n"
+            "• 24 ساعة (يوم كامل)\n\n"
+            "*للتفعيل في مجموعة:*\n"
+            "استخدم `/settings` في المجموعة واختر الفاصل الزمني المناسب"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("1 دقيقة", callback_data="diverse_interval_1"),
+            types.InlineKeyboardButton("5 دقائق", callback_data="diverse_interval_5"),
+            types.InlineKeyboardButton("15 دقيقة", callback_data="diverse_interval_15"),
+            types.InlineKeyboardButton("1 ساعة", callback_data="diverse_interval_60"),
+            types.InlineKeyboardButton("2 ساعة", callback_data="diverse_interval_120"),
+            types.InlineKeyboardButton("4 ساعات", callback_data="diverse_interval_240"),
+            types.InlineKeyboardButton("8 ساعات", callback_data="diverse_interval_480"),
+            types.InlineKeyboardButton("12 ساعة", callback_data="diverse_interval_720"),
+            types.InlineKeyboardButton("24 ساعة", callback_data="diverse_interval_1440")
+        )
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data="advanced_settings"))
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Diverse azkar settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_diverse_azkar_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("diverse_interval_"))
+def callback_diverse_interval(call: types.CallbackQuery):
+    """
+    Handle diverse azkar interval selection.
+    """
+    try:
+        interval_minutes = int(call.data.replace("diverse_interval_", ""))
+        
+        interval_names = {
+            1: "دقيقة واحدة",
+            5: "5 دقائق",
+            15: "15 دقيقة",
+            60: "ساعة واحدة",
+            120: "ساعتين",
+            240: "4 ساعات",
+            480: "8 ساعات",
+            720: "12 ساعة",
+            1440: "24 ساعة"
+        }
+        
+        bot.answer_callback_query(
+            call.id,
+            f"✓ تم اختيار الفاصل الزمني: {interval_names.get(interval_minutes, str(interval_minutes))}",
+            show_alert=False
+        )
+        
+        logger.info(f"User {call.from_user.id} selected diverse interval: {interval_minutes} minutes")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_diverse_interval: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "ramadan_settings")
+def callback_ramadan_settings(call: types.CallbackQuery):
+    """
+    Handle callback for Ramadan settings panel.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات رمضان")
+        
+        settings_text = (
+            "🌙 *إعدادات رمضان*\n\n"
+            "*الأقسام المتاحة:*\n\n"
+            "*1. ليلة القدر:*\n"
+            "أدعية خاصة بليلة القدر المباركة\n"
+            "يتم إرسالها في الليالي الوترية من العشر الأواخر\n\n"
+            "*2. العشر الأواخر من رمضان:*\n"
+            "أذكار وأدعية خاصة بالعشر الأواخر\n"
+            "تبدأ من اليوم 21 من رمضان\n\n"
+            "*3. دعاء الإفطار:*\n"
+            "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
+            "*للتفعيل:*\n"
+            "استخدم `/settings` في المجموعة وفعّل الميزات المطلوبة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Ramadan settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_ramadan_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "hajj_eid_settings")
+def callback_hajj_eid_settings(call: types.CallbackQuery):
+    """
+    Handle callback for Hajj and Eid settings panel.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "إعدادات الحج والعيد")
+        
+        settings_text = (
+            "🕋 *إعدادات الحج والعيد*\n\n"
+            "*أقسام الحج:*\n\n"
+            "*1. يوم عرفة:*\n"
+            "أدعية خاصة بيوم عرفة المبارك (9 ذو الحجة)\n"
+            "خير الدعاء دعاء يوم عرفة\n\n"
+            "*2. أذكار الحج:*\n"
+            "التلبية وأدعية الحج والعمرة\n\n"
+            "*أقسام العيد:*\n\n"
+            "*1. ليلة العيد:*\n"
+            "أدعية ليلة العيد المباركة\n"
+            "تُرسل في ليلة 29 أو 30 رمضان\n\n"
+            "*2. يوم العيد:*\n"
+            "تكبيرات العيد وأدعية يوم العيد\n"
+            "تُرسل في أول أيام العيد\n\n"
+            "*3. عيد الأضحى:*\n"
+            "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
+            "*للتفعيل:*\n"
+            "استخدم `/settings` في المجموعة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Hajj/Eid settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_hajj_eid_settings: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
