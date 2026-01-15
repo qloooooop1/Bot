@@ -5,6 +5,7 @@ from datetime import datetime
 import pytz
 import random
 import sqlite3
+import json
 
 from flask import Flask, request, abort
 import telebot
@@ -68,14 +69,62 @@ def init_db():
             delete_service_messages INTEGER DEFAULT 1,
             morning_time TEXT DEFAULT '05:00',
             evening_time TEXT DEFAULT '18:00',
-            sleep_time TEXT DEFAULT '22:00'
+            sleep_time TEXT DEFAULT '22:00',
+            azkar_format TEXT DEFAULT 'text',
+            azkar_interval INTEGER DEFAULT 180,
+            random_azkar INTEGER DEFAULT 1
         )
     ''')
+    
+    # Migrate existing tables if needed
+    try:
+        c.execute("ALTER TABLE chat_settings ADD COLUMN azkar_format TEXT DEFAULT 'text'")
+    except:
+        pass
+    try:
+        c.execute("ALTER TABLE chat_settings ADD COLUMN azkar_interval INTEGER DEFAULT 180")
+    except:
+        pass
+    try:
+        c.execute("ALTER TABLE chat_settings ADD COLUMN random_azkar INTEGER DEFAULT 1")
+    except:
+        pass
+    
     conn.commit()
     conn.close()
     logger.info("Database initialized")
 
 init_db()
+
+# ────────────────────────────────────────────────
+#               JSON Data Loading
+# ────────────────────────────────────────────────
+
+def load_json_data(filename):
+    """Load azkar data from JSON file"""
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), "data", filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"JSON file not found: {filename}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON file {filename}: {e}")
+        return None
+
+# Load all azkar data
+MORNING_AZKAR_DATA = load_json_data("morning_azkar.json")
+EVENING_AZKAR_DATA = load_json_data("evening_azkar.json")
+FRIDAY_AZKAR_DATA = load_json_data("friday_azkar.json")
+RAMADAN_AZKAR_DATA = load_json_data("ramadan_azkar.json")
+HAJJ_AZKAR_DATA = load_json_data("hajj_azkar.json")
+EID_AZKAR_DATA = load_json_data("eid_azkar.json")
+ARAFAH_AZKAR_DATA = load_json_data("arafah_azkar.json")
+LAYLAT_ALQADR_DATA = load_json_data("laylat_alqadr.json")
+LAST_TEN_DAYS_DATA = load_json_data("last_ten_days.json")
+HADITHS_DATA = load_json_data("hadiths.json")
+
 
 def get_chat_settings(chat_id: int) -> dict:
     conn = sqlite3.connect(DB_FILE)
@@ -104,6 +153,9 @@ def get_chat_settings(chat_id: int) -> dict:
         "morning_time": row[8],
         "evening_time": row[9],
         "sleep_time": row[10],
+        "azkar_format": row[11] if len(row) > 11 else "text",
+        "azkar_interval": row[12] if len(row) > 12 else 180,
+        "random_azkar": bool(row[13]) if len(row) > 13 else True,
     }
 
 def update_chat_setting(chat_id: int, key: str, value):
@@ -111,7 +163,8 @@ def update_chat_setting(chat_id: int, key: str, value):
         "is_enabled", "morning_azkar", "evening_azkar",
         "friday_sura", "friday_dua", "sleep_message",
         "delete_service_messages", "morning_time",
-        "evening_time", "sleep_time"
+        "evening_time", "sleep_time", "azkar_format",
+        "azkar_interval", "random_azkar"
     }
     if key not in allowed_keys:
         logger.error(f"Invalid setting key: {key}")
@@ -119,7 +172,15 @@ def update_chat_setting(chat_id: int, key: str, value):
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (int(value), chat_id))
+    
+    # Handle different value types
+    if key in ["morning_time", "evening_time", "sleep_time", "azkar_format"]:
+        c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (str(value), chat_id))
+    elif key == "azkar_interval":
+        c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (int(value), chat_id))
+    else:
+        c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (int(value), chat_id))
+    
     conn.commit()
     conn.close()
     logger.info(f"Updated {key} = {value} for chat {chat_id}")
@@ -258,6 +319,21 @@ SLEEP_MESSAGE = (
 #               Sending Functions
 # ────────────────────────────────────────────────
 
+def format_zikr_message(zikr, icon="📿"):
+    """Format a single zikr from JSON data into a message"""
+    message = f"{icon} *{zikr.get('text', '')}*\n\n"
+    
+    if 'reference' in zikr and zikr['reference']:
+        message += f"📚 {zikr['reference']}\n"
+    
+    if 'repetitions' in zikr and zikr['repetitions']:
+        message += f"✨ ({zikr['repetitions']})\n"
+    
+    if 'virtue' in zikr and zikr['virtue']:
+        message += f"\n💎 {zikr['virtue']}"
+    
+    return message
+
 def send_azkar(chat_id: int, azkar_type: str):
     try:
         settings = get_chat_settings(chat_id)
@@ -265,18 +341,40 @@ def send_azkar(chat_id: int, azkar_type: str):
             return
 
         messages = []
+        icon = "📿"
 
+        # Load from JSON data
         if azkar_type == "morning" and settings["morning_azkar"]:
-            messages = MORNING_AZKAR
+            if MORNING_AZKAR_DATA and 'azkar' in MORNING_AZKAR_DATA:
+                icon = MORNING_AZKAR_DATA.get('icon', '🌅')
+                messages = [format_zikr_message(zikr, icon) for zikr in MORNING_AZKAR_DATA['azkar']]
+            else:
+                messages = MORNING_AZKAR  # Fallback to old data
+                
         elif azkar_type == "evening" and settings["evening_azkar"]:
-            messages = EVENING_AZKAR
+            if EVENING_AZKAR_DATA and 'azkar' in EVENING_AZKAR_DATA:
+                icon = EVENING_AZKAR_DATA.get('icon', '🌙')
+                messages = [format_zikr_message(zikr, icon) for zikr in EVENING_AZKAR_DATA['azkar']]
+            else:
+                messages = EVENING_AZKAR  # Fallback to old data
+                
         elif azkar_type == "friday_kahf" and settings["friday_sura"]:
-            messages = [KAHF_REMINDER]
+            if FRIDAY_AZKAR_DATA and 'kahf_reminder' in FRIDAY_AZKAR_DATA:
+                messages = [FRIDAY_AZKAR_DATA['kahf_reminder']['text']]
+            else:
+                messages = [KAHF_REMINDER]  # Fallback
+                
         elif azkar_type == "friday_dua" and settings["friday_dua"]:
-            messages = FRIDAY_DUA
+            if FRIDAY_AZKAR_DATA and 'azkar' in FRIDAY_AZKAR_DATA:
+                icon = FRIDAY_AZKAR_DATA.get('icon', '🕌')
+                messages = [format_zikr_message(zikr, icon) for zikr in FRIDAY_AZKAR_DATA['azkar']]
+            else:
+                messages = FRIDAY_DUA  # Fallback
+                
         elif azkar_type == "sleep" and settings["sleep_message"]:
             messages = [SLEEP_MESSAGE]
 
+        # Send messages
         for msg in messages:
             try:
                 bot.send_message(chat_id, msg, parse_mode="Markdown")
@@ -290,6 +388,42 @@ def send_azkar(chat_id: int, azkar_type: str):
 
     except Exception as e:
         logger.error(f"Error in send_azkar ({azkar_type}) for {chat_id}: {e}", exc_info=True)
+
+def send_random_azkar(chat_id: int):
+    """Send random azkar/hadith based on settings"""
+    try:
+        settings = get_chat_settings(chat_id)
+        if not settings["is_enabled"] or not settings.get("random_azkar", True):
+            return
+        
+        # Collect all available azkar
+        all_azkar = []
+        
+        # Add hadiths
+        if HADITHS_DATA and 'hadiths' in HADITHS_DATA:
+            for hadith in HADITHS_DATA['hadiths']:
+                msg = f"📖 *الحديث الشريف*\n\n{hadith['text']}\n\n📚 {hadith['reference']}"
+                if 'virtue' in hadith:
+                    msg += f"\n\n💎 {hadith['virtue']}"
+                all_azkar.append(msg)
+        
+        # Add various category azkar (for special occasions)
+        if RAMADAN_AZKAR_DATA and 'azkar' in RAMADAN_AZKAR_DATA:
+            for zikr in RAMADAN_AZKAR_DATA['azkar']:
+                all_azkar.append(format_zikr_message(zikr, '🌙'))
+        
+        if HAJJ_AZKAR_DATA and 'azkar' in HAJJ_AZKAR_DATA:
+            for zikr in HAJJ_AZKAR_DATA['azkar']:
+                all_azkar.append(format_zikr_message(zikr, '🕋'))
+        
+        # Randomly select and send one
+        if all_azkar:
+            msg = random.choice(all_azkar)
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+            logger.info(f"Sent random azkar to {chat_id}")
+            
+    except Exception as e:
+        logger.error(f"Error sending random azkar to {chat_id}: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Scheduling
@@ -364,6 +498,19 @@ def schedule_chat_jobs(chat_id: int):
             )
         except:
             logger.error(f"Invalid sleep time for {chat_id}")
+    
+    # Random azkar with interval
+    if settings.get("random_azkar", True):
+        interval = settings.get("azkar_interval", 180)
+        scheduler.add_job(
+            send_random_azkar,
+            'interval',
+            minutes=interval,
+            args=[chat_id],
+            id=f"random_azkar_{chat_id}",
+            replace_existing=True
+        )
+        logger.info(f"Scheduled random azkar every {interval} minutes for {chat_id}")
 
     logger.info(f"Scheduled jobs for chat {chat_id}")
 
@@ -413,31 +560,70 @@ def delete_service_messages(message: types.Message):
     except:
         pass
 
-@bot.message_handler(commands=["start"])
+@bot.message_handler(commands=["start", "ستارت"])
 def cmd_start(message: types.Message):
-    if message.chat.type == "private":
+    chat_type = message.chat.type
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if chat_type == "private":
+        # Private chat - show welcome message with buttons
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("المطور", url="https://t.me/dev3bod"),
-            types.InlineKeyboardButton("المجموعة الرسمية", url="https://t.me/NourAdhkar")
+            types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
+            types.InlineKeyboardButton("👥 المجموعة الرئيسية", url="https://t.me/NourAdhkar"),
+            types.InlineKeyboardButton("➕ أضفني للمجموعة", url=f"https://t.me/{bot.get_me().username}?startgroup=true")
         )
         bot.reply_to(
             message,
-            "🌟 *مرحباً بك في بوت نور الذكر* 🌟\n\n"
-            "📿 بوت يرسل الأذكار والأدعية يومياً في المجموعات\n\n"
-            "✨ للتفعيل:\n"
-            "1. أضف البوت إلى مجموعتك\n"
-            "2. اجعله مشرفاً\n"
-            "3. سيعمل تلقائياً\n\n"
-            "⚙️ /settings للإعدادات\n"
-            "📊 /status للحالة",
+            "🌟 *مرحبًا، أنا بوت نور الذكر* 🌟\n\n"
+            "📿 أقوم بنشر الأذكار اليومية والآيات والأحاديث بشكل تلقائي في المجموعات.\n\n"
+            "✨ *للتفعيل:*\n"
+            "أضفني كمشرف في مجموعتك لكي أعمل بشكل صحيح.\n\n"
+            "⚙️ *الميزات:*\n"
+            "• أذكار الصباح والمساء\n"
+            "• سورة الكهف يوم الجمعة\n"
+            "• أدعية وأذكار متنوعة\n"
+            "• أحاديث نبوية شريفة\n"
+            "• أذكار خاصة بالمناسبات الإسلامية\n\n"
+            "📊 استخدم /help للمساعدة",
             reply_markup=markup,
             parse_mode="Markdown"
         )
-        logger.info(f"/start received in private chat from {message.from_user.id}")
+        logger.info(f"/start received in private chat from {user_id}")
     else:
-        bot.reply_to(message, "تم التفعيل! استخدم /settings للإعدادات")
-        logger.info(f"/start received in group {message.chat.id}")
+        # Group chat - check if user is admin
+        try:
+            member = bot.get_chat_member(chat_id, user_id)
+            is_admin = member.status in ['creator', 'administrator']
+            
+            if is_admin:
+                # Admin in group - show control panel button
+                markup = types.InlineKeyboardMarkup()
+                markup.add(
+                    types.InlineKeyboardButton("⚙️ لوحة التحكم", callback_data="open_settings")
+                )
+                bot.reply_to(
+                    message,
+                    "✅ *مرحباً بك أيها المشرف!*\n\n"
+                    "البوت جاهز للعمل في هذه المجموعة.\n"
+                    "اضغط على الزر أدناه لفتح لوحة التحكم.",
+                    reply_markup=markup,
+                    parse_mode="Markdown"
+                )
+            else:
+                # Regular user in group
+                bot.reply_to(
+                    message,
+                    "🌟 *بوت نور الذكر يعمل بنجاح!* 🌟\n\n"
+                    "سيتم إرسال الأذكار والأدعية تلقائياً حسب الإعدادات.\n\n"
+                    "📿 بارك الله فيكم"
+                )
+        except Exception as e:
+            logger.error(f"Error checking admin status: {e}")
+            bot.reply_to(message, "✅ البوت يعمل بنجاح!")
+        
+        logger.info(f"/start received in group {chat_id} from user {user_id}")
 
 @bot.message_handler(commands=["settings"])
 def cmd_settings(message: types.Message):
@@ -459,23 +645,54 @@ def cmd_settings(message: types.Message):
         ("friday_sura", "📿 سورة الكهف"),
         ("friday_dua", "🕌 أدعية الجمعة"),
         ("sleep_message", "😴 رسالة النوم"),
+        ("random_azkar", "🎲 أذكار متنوعة"),
         ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
     ]
 
     for key, label in btns:
         status = "✓" if settings[key] else "✗"
         markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+    
+    # Add format selection button
+    format_labels = {
+        "text": "📝 نصي",
+        "audio": "🎵 صوتي",
+        "image": "🖼️ صورة",
+        "pdf": "📄 PDF",
+        "random": "🎲 عشوائي"
+    }
+    current_format = settings.get('azkar_format', 'text')
+    markup.add(types.InlineKeyboardButton(
+        f"📑 تنسيق الأذكار: {format_labels.get(current_format, '📝 نصي')}", 
+        callback_data="change_format"
+    ))
+    
+    # Add interval setting button
+    markup.add(types.InlineKeyboardButton(
+        f"⏱️ الفاصل الزمني: {settings.get('azkar_interval', 180)} دقيقة",
+        callback_data="change_interval"
+    ))
+
+    format_desc = {
+        "text": "نصي فقط",
+        "audio": "ملفات صوتية",
+        "image": "صور",
+        "pdf": "ملفات PDF",
+        "random": "تنسيق عشوائي"
+    }
 
     text = (
-        "⚙️ *لوحة التحكم*\n\n"
+        "⚙️ *لوحة التحكم الرئيسية*\n\n"
         f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-        "الأوقات المجدولة:\n"
+        "📅 *الأوقات المجدولة:*\n"
         f"🌅 الصباح: {settings['morning_time']}\n"
         f"🌙 المساء: {settings['evening_time']}\n"
         f"😴 النوم: {settings['sleep_time']}\n"
         f"📿 سورة الكهف: الجمعة 09:00\n"
         f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
-        "اضغط لتغيير الإعدادات"
+        f"📑 *التنسيق الحالي:* {format_desc.get(current_format, 'نصي')}\n"
+        f"⏱️ *الفاصل الزمني:* {settings.get('azkar_interval', 180)} دقيقة\n\n"
+        "💡 اضغط على الأزرار أدناه لتغيير الإعدادات"
     )
 
     bot.send_message(
@@ -499,6 +716,7 @@ def callback_toggle(call: types.CallbackQuery):
     schedule_chat_jobs(call.message.chat.id)
 
     # Refresh markup
+    settings = get_chat_settings(call.message.chat.id)
     markup = types.InlineKeyboardMarkup(row_width=2)
     btns = [
         ("morning_azkar", "🌅 أذكار الصباح"),
@@ -506,14 +724,54 @@ def callback_toggle(call: types.CallbackQuery):
         ("friday_sura", "📿 سورة الكهف"),
         ("friday_dua", "🕌 أدعية الجمعة"),
         ("sleep_message", "😴 رسالة النوم"),
+        ("random_azkar", "🎲 أذكار متنوعة"),
         ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
     ]
 
     for k, label in btns:
-        status = "✓" if get_chat_settings(call.message.chat.id)[k] else "✗"
+        status = "✓" if settings[k] else "✗"
         markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{k}"))
+    
+    # Add format and interval buttons
+    format_labels = {
+        "text": "📝 نصي",
+        "audio": "🎵 صوتي",
+        "image": "🖼️ صورة",
+        "pdf": "📄 PDF",
+        "random": "🎲 عشوائي"
+    }
+    current_format = settings.get('azkar_format', 'text')
+    markup.add(types.InlineKeyboardButton(
+        f"📑 تنسيق الأذكار: {format_labels.get(current_format, '📝 نصي')}", 
+        callback_data="change_format"
+    ))
+    markup.add(types.InlineKeyboardButton(
+        f"⏱️ الفاصل الزمني: {settings.get('azkar_interval', 180)} دقيقة",
+        callback_data="change_interval"
+    ))
 
-    text = call.message.text.split("\n\n")[0] + "\n\n" + call.message.text.split("\n\n")[1]
+    format_desc = {
+        "text": "نصي فقط",
+        "audio": "ملفات صوتية",
+        "image": "صور",
+        "pdf": "ملفات PDF",
+        "random": "تنسيق عشوائي"
+    }
+
+    text = (
+        "⚙️ *لوحة التحكم الرئيسية*\n\n"
+        f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
+        "📅 *الأوقات المجدولة:*\n"
+        f"🌅 الصباح: {settings['morning_time']}\n"
+        f"🌙 المساء: {settings['evening_time']}\n"
+        f"😴 النوم: {settings['sleep_time']}\n"
+        f"📿 سورة الكهف: الجمعة 09:00\n"
+        f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
+        f"📑 *التنسيق الحالي:* {format_desc.get(current_format, 'نصي')}\n"
+        f"⏱️ *الفاصل الزمني:* {settings.get('azkar_interval', 180)} دقيقة\n\n"
+        "💡 اضغط على الأزرار أدناه لتغيير الإعدادات"
+    )
+    
     bot.edit_message_text(
         text,
         call.message.chat.id,
@@ -522,7 +780,195 @@ def callback_toggle(call: types.CallbackQuery):
         reply_markup=markup
     )
 
-    bot.answer_callback_query(call.id, "تم التحديث")
+    bot.answer_callback_query(call.id, "✅ تم التحديث")
+
+@bot.callback_query_handler(func=lambda call: call.data == "open_settings")
+def callback_open_settings(call: types.CallbackQuery):
+    """Handle the open_settings callback from /start command in groups"""
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط", show_alert=True)
+        return
+    
+    # Redirect to settings in same message
+    settings = get_chat_settings(call.message.chat.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    btns = [
+        ("morning_azkar", "🌅 أذكار الصباح"),
+        ("evening_azkar", "🌙 أذكار المساء"),
+        ("friday_sura", "📿 سورة الكهف"),
+        ("friday_dua", "🕌 أدعية الجمعة"),
+        ("sleep_message", "😴 رسالة النوم"),
+        ("random_azkar", "🎲 أذكار متنوعة"),
+        ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
+    ]
+    
+    for key, label in btns:
+        status = "✓" if settings[key] else "✗"
+        markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+    
+    format_labels = {
+        "text": "📝 نصي",
+        "audio": "🎵 صوتي",
+        "image": "🖼️ صورة",
+        "pdf": "📄 PDF",
+        "random": "🎲 عشوائي"
+    }
+    current_format = settings.get('azkar_format', 'text')
+    markup.add(types.InlineKeyboardButton(
+        f"📑 تنسيق الأذكار: {format_labels.get(current_format, '📝 نصي')}", 
+        callback_data="change_format"
+    ))
+    markup.add(types.InlineKeyboardButton(
+        f"⏱️ الفاصل الزمني: {settings.get('azkar_interval', 180)} دقيقة",
+        callback_data="change_interval"
+    ))
+    
+    format_desc = {
+        "text": "نصي فقط",
+        "audio": "ملفات صوتية",
+        "image": "صور",
+        "pdf": "ملفات PDF",
+        "random": "تنسيق عشوائي"
+    }
+    
+    text = (
+        "⚙️ *لوحة التحكم الرئيسية*\n\n"
+        f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
+        "📅 *الأوقات المجدولة:*\n"
+        f"🌅 الصباح: {settings['morning_time']}\n"
+        f"🌙 المساء: {settings['evening_time']}\n"
+        f"😴 النوم: {settings['sleep_time']}\n"
+        f"📿 سورة الكهف: الجمعة 09:00\n"
+        f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
+        f"📑 *التنسيق الحالي:* {format_desc.get(current_format, 'نصي')}\n"
+        f"⏱️ *الفاصل الزمني:* {settings.get('azkar_interval', 180)} دقيقة\n\n"
+        "💡 اضغط على الأزرار أدناه لتغيير الإعدادات"
+    )
+    
+    bot.edit_message_text(
+        text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    bot.answer_callback_query(call.id, "✅ تم فتح لوحة التحكم")
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_format")
+def callback_change_format(call: types.CallbackQuery):
+    """Handle format selection"""
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط", show_alert=True)
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📝 نصي", callback_data="format_text"),
+        types.InlineKeyboardButton("🎵 صوتي", callback_data="format_audio"),
+        types.InlineKeyboardButton("🖼️ صورة", callback_data="format_image"),
+        types.InlineKeyboardButton("📄 PDF", callback_data="format_pdf"),
+        types.InlineKeyboardButton("🎲 عشوائي", callback_data="format_random"),
+        types.InlineKeyboardButton("◀️ رجوع", callback_data="open_settings")
+    )
+    
+    text = (
+        "📑 *تخصيص تنسيق الأذكار*\n\n"
+        "اختر التنسيق المفضل لإرسال الأذكار:\n\n"
+        "• *نصي:* رسائل نصية فقط\n"
+        "• *صوتي:* ملفات صوتية (للصباح والمساء)\n"
+        "• *صورة:* صور تحتوي على الأذكار\n"
+        "• *PDF:* ملفات PDF\n"
+        "• *عشوائي:* اختيار عشوائي بين جميع التنسيقات\n\n"
+        "💡 ملاحظة: التنسيق الصوتي متاح حالياً للأذكار الصباحية والمسائية فقط"
+    )
+    
+    bot.edit_message_text(
+        text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("format_"))
+def callback_set_format(call: types.CallbackQuery):
+    """Set the selected format"""
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط", show_alert=True)
+        return
+    
+    format_type = call.data.split("_")[1]
+    update_chat_setting(call.message.chat.id, "azkar_format", format_type)
+    
+    format_labels = {
+        "text": "📝 نصي",
+        "audio": "🎵 صوتي",
+        "image": "🖼️ صورة",
+        "pdf": "📄 PDF",
+        "random": "🎲 عشوائي"
+    }
+    
+    bot.answer_callback_query(call.id, f"✅ تم تحديد التنسيق: {format_labels.get(format_type, 'نصي')}")
+    
+    # Return to main settings
+    callback_open_settings(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_interval")
+def callback_change_interval(call: types.CallbackQuery):
+    """Handle interval selection"""
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط", show_alert=True)
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("⏱️ 60 دقيقة", callback_data="interval_60"),
+        types.InlineKeyboardButton("⏱️ 90 دقيقة", callback_data="interval_90"),
+        types.InlineKeyboardButton("⏱️ 120 دقيقة", callback_data="interval_120"),
+        types.InlineKeyboardButton("⏱️ 180 دقيقة", callback_data="interval_180"),
+        types.InlineKeyboardButton("⏱️ 240 دقيقة", callback_data="interval_240"),
+        types.InlineKeyboardButton("⏱️ 360 دقيقة", callback_data="interval_360"),
+        types.InlineKeyboardButton("◀️ رجوع", callback_data="open_settings")
+    )
+    
+    text = (
+        "⏱️ *تخصيص الفاصل الزمني*\n\n"
+        "اختر الفاصل الزمني بين إرسال الأذكار المتنوعة:\n\n"
+        "• 60 دقيقة = ساعة واحدة\n"
+        "• 90 دقيقة = ساعة ونصف\n"
+        "• 120 دقيقة = ساعتان\n"
+        "• 180 دقيقة = 3 ساعات (الافتراضي)\n"
+        "• 240 دقيقة = 4 ساعات\n"
+        "• 360 دقيقة = 6 ساعات\n\n"
+        "💡 الفاصل الزمني يتحكم في تكرار الأذكار المتنوعة والأحاديث"
+    )
+    
+    bot.edit_message_text(
+        text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("interval_"))
+def callback_set_interval(call: types.CallbackQuery):
+    """Set the selected interval"""
+    if not bot.get_chat_member(call.message.chat.id, call.from_user.id).status in ["administrator", "creator"]:
+        bot.answer_callback_query(call.id, "⚠️ هذا متاح للمشرفين فقط", show_alert=True)
+        return
+    
+    interval = int(call.data.split("_")[1])
+    update_chat_setting(call.message.chat.id, "azkar_interval", interval)
+    schedule_chat_jobs(call.message.chat.id)
+    
+    bot.answer_callback_query(call.id, f"✅ تم تحديد الفاصل الزمني: {interval} دقيقة")
+    
+    # Return to main settings
+    callback_open_settings(call)
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
@@ -586,10 +1032,7 @@ def cmd_disable(message: types.Message):
             job.remove()
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
     logger.info(f"Bot disabled in {message.chat.id}")
-    @bot.message_handler(commands=['start'])
-def cmd_start(message):
-    bot.reply_to(message, "مرحبا! البوت شغال الآن 🚀\nأرسل /help للمساعدة")
-    logger.info(f"/start received from {message.from_user.id} in chat {message.chat.id}")
+
 # ────────────────────────────────────────────────
 #               Flask Routes
 # ────────────────────────────────────────────────
