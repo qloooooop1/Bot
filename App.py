@@ -79,15 +79,18 @@ def init_db():
     # Migrate existing tables if needed
     try:
         c.execute("ALTER TABLE chat_settings ADD COLUMN azkar_format TEXT DEFAULT 'text'")
-    except:
+    except sqlite3.OperationalError:
+        # Column already exists
         pass
     try:
         c.execute("ALTER TABLE chat_settings ADD COLUMN azkar_interval INTEGER DEFAULT 180")
-    except:
+    except sqlite3.OperationalError:
+        # Column already exists
         pass
     try:
         c.execute("ALTER TABLE chat_settings ADD COLUMN random_azkar INTEGER DEFAULT 1")
-    except:
+    except sqlite3.OperationalError:
+        # Column already exists
         pass
     
     conn.commit()
@@ -109,8 +112,8 @@ def load_json_data(filename):
     except FileNotFoundError:
         logger.warning(f"JSON file not found: {filename}")
         return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing JSON file {filename}: {e}")
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        logger.error(f"Error loading JSON file {filename}: {e}")
         return None
 
 # Load all azkar data
