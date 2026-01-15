@@ -1,6 +1,6 @@
 import os
 import telebot
-from flask import Flask, request
+from flask import Flask, request, abort
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
@@ -28,9 +28,8 @@ PORT = int(os.environ.get('PORT', 5000))
 # المنطقة الزمنية
 TIMEZONE = pytz.timezone('Asia/Riyadh')
 
-# إنشاء مسار آمن للـ webhook (hash من التوكن بدلاً من التوكن نفسه)
-import hashlib
-WEBHOOK_PATH = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()
+# مسار الـ webhook
+WEBHOOK_PATH = '/webhook'
 
 # ============= إنشاء البوت وتطبيق Flask =============
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -410,7 +409,7 @@ def delete_service_messages(message):
 
 # معالج أمر /start
 @bot.message_handler(commands=['start'])
-def start_command(message):
+def send_welcome(message):
     """معالج أمر البداية"""
     chat_type = message.chat.type
     
@@ -436,36 +435,15 @@ def start_command(message):
             "1️⃣ أضف البوت إلى مجموعتك\n"
             "2️⃣ اجعله مشرفاً\n"
             "3️⃣ سيعمل تلقائياً! ✅\n\n"
-            "⚙️ استخدم /settings للتحكم في الإعدادات"
+            "⚙️ استخدم /settings للتحكم في الإعدادات\n\n"
+            "تم تفعيل البوت بنجاح! 🚀"
         )
         
         bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown', reply_markup=markup)
     
     else:
         # في المجموعة
-        if is_user_admin(message.chat.id, message.from_user.id):
-            # للمشرفين
-            markup = telebot.types.InlineKeyboardMarkup()
-            markup.add(telebot.types.InlineKeyboardButton(
-                "⚙️ الإعدادات",
-                url=f"https://t.me/{bot.get_me().username}?start=settings"
-            ))
-            
-            bot.send_message(
-                message.chat.id,
-                "✨ مرحباً! أنا بوت الأذكار الإسلامية\n\n"
-                "⚙️ يمكنك التحكم في إعداداتي باستخدام /settings",
-                parse_mode='Markdown',
-                reply_markup=markup
-            )
-        else:
-            # للأعضاء
-            bot.send_message(
-                message.chat.id,
-                "✨ مرحباً! أنا بوت الأذكار الإسلامية\n\n"
-                "📿 أقوم بإرسال الأذكار والأدعية تلقائياً",
-                parse_mode='Markdown'
-            )
+        bot.reply_to(message, "تم تفعيل البوت بنجاح! 🚀")
 
 # معالج أمر /settings
 @bot.message_handler(commands=['settings'])
@@ -713,7 +691,7 @@ def index():
 def set_webhook():
     """ضبط الـ webhook"""
     try:
-        webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_PATH}"
+        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
         bot.remove_webhook()
         result = bot.set_webhook(url=webhook_url)
         if result:
@@ -723,17 +701,16 @@ def set_webhook():
     except Exception as e:
         return f"❌ خطأ: {str(e)}"
 
-@app.route(f'/{WEBHOOK_PATH}', methods=['POST'])
+@app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
     """معالج الـ webhook"""
-    try:
+    if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
         return '', 200
-    except Exception as e:
-        print(f"Webhook error: {e}")
-        return '', 500
+    else:
+        abort(403)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -761,10 +738,10 @@ def main():
         
         # إعداد الـ webhook تلقائياً عند التشغيل
         try:
-            webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_PATH}"
-            bot.remove_webhook()
-            bot.set_webhook(url=webhook_url)
-            print(f"✅ تم ضبط Webhook بنجاح")
+            webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+            bot.remove_webhook()  # إزالة أي Webhook قديم
+            success = bot.set_webhook(url=webhook_url)
+            print(f"Webhook set: {success} to {webhook_url}")
         except Exception as e:
             print(f"⚠️ تحذير: فشل ضبط Webhook تلقائياً: {e}")
             print("💡 يمكنك ضبطه يدوياً عبر زيارة: /setwebhook")
@@ -779,3 +756,9 @@ def main():
 
 if __name__ == '__main__':
     main()
+else:
+    # على Render: ضبط Webhook
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    bot.remove_webhook()  # إزالة أي Webhook قديم
+    success = bot.set_webhook(url=webhook_url)
+    print(f"Webhook set: {success} to {webhook_url}")
