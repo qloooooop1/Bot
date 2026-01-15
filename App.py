@@ -814,42 +814,84 @@ def cmd_disable(message: types.Message):
 
 @app.route("/")
 def home():
-    """Health check endpoint for monitoring services"""
-    return "نور الذكر – البوت يعمل ✓", 200
+    """
+    Health check endpoint for monitoring services.
+    Returns detailed status information about the bot and webhook.
+    """
+    try:
+        info = bot.get_webhook_info()
+        webhook_status = "✓ Configured" if info.url else "✗ Not configured"
+        response = f"نور الذكر – البوت يعمل ✓\nWebhook: {webhook_status}"
+        return response, 200
+    except Exception as e:
+        logger.error(f"Error in home endpoint: {e}")
+        return "نور الذكر – البوت يعمل ✓", 200
 
 @app.route("/health")
 def health():
-    """Detailed health check endpoint"""
+    """
+    Detailed health check endpoint with comprehensive webhook diagnostics.
+    Returns JSON with bot status, webhook configuration, and error information.
+    """
     try:
         # Check webhook status
         info = bot.get_webhook_info()
+        
+        # Determine webhook health
+        webhook_configured = bool(info.url)
+        has_errors = bool(info.last_error_message)
+        
         status = {
-            "status": "healthy",
-            "webhook_url": info.url,
+            "status": "healthy" if webhook_configured and not has_errors else "degraded",
+            "bot": "operational",
+            "webhook_url": info.url or "Not configured",
+            "webhook_configured": webhook_configured,
             "pending_updates": info.pending_update_count,
-            "last_error": info.last_error_message or "None"
+            "last_error_date": info.last_error_date if info.last_error_date else None,
+            "last_error": info.last_error_message or "None",
+            "max_connections": info.max_connections if hasattr(info, 'max_connections') else None,
+            "expected_webhook": WEBHOOK_URL
         }
+        
+        # Log if webhook URL doesn't match expected
+        if webhook_configured and info.url != WEBHOOK_URL:
+            logger.warning(f"Webhook URL mismatch! Expected: {WEBHOOK_URL}, Actual: {info.url}")
+            status["status"] = "misconfigured"
+            status["warning"] = f"Webhook URL mismatch. Expected: {WEBHOOK_URL}"
+        
         return status, 200
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy", "error": str(e)}, 500
+        logger.error(f"Health check failed: {e}", exc_info=True)
+        return {
+            "status": "unhealthy", 
+            "bot": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, 500
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
-    """Handle incoming webhook updates from Telegram"""
+    """
+    Handle incoming webhook updates from Telegram.
+    Processes all incoming messages and updates with comprehensive error handling.
+    """
     if request.headers.get("content-type") == "application/json":
         try:
             json_string = request.get_data().decode("utf-8")
             update = types.Update.de_json(json_string)
             if update:
+                logger.debug(f"Processing update: {update.update_id}")
                 bot.process_new_updates([update])
+                logger.debug(f"Update {update.update_id} processed successfully")
+            else:
+                logger.warning("Received empty update")
             return "", 200
         except UnicodeDecodeError as e:
             logger.error(f"Webhook decode error: {e}")
             return "", 400
         except Exception as e:
             logger.error(f"Webhook processing error: {e}", exc_info=True)
-            # Return 200 to prevent Telegram from retrying
+            # Return 200 to prevent Telegram from retrying indefinitely
             return "", 200
     else:
         logger.warning(f"Invalid content-type: {request.headers.get('content-type')}")
@@ -857,27 +899,91 @@ def telegram_webhook():
 
 @app.route("/setwebhook", methods=["GET"])
 def manual_set_webhook():
+    """
+    Manually trigger webhook setup.
+    Useful for debugging and manual reconfiguration.
+    """
     try:
+        logger.info("Manual webhook setup requested")
         bot.remove_webhook()
-        success = bot.set_webhook(url=WEBHOOK_URL)
-        return f"Webhook {'تم بنجاح' if success else 'فشل'} → {WEBHOOK_URL}"
+        logger.info("Previous webhook removed")
+        
+        success = bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True,
+            max_connections=100,
+            allowed_updates=["message", "edited_message", "channel_post", "my_chat_member", "callback_query"]
+        )
+        
+        if success:
+            info = bot.get_webhook_info()
+            logger.info(f"Webhook set successfully: {info.url}")
+            return f"✓ Webhook تم بنجاح → {WEBHOOK_URL}<br>Status: {info.url}", 200
+        else:
+            logger.error("Webhook setup failed")
+            return f"✗ Webhook فشل → {WEBHOOK_URL}", 500
     except Exception as e:
-        return f"خطأ: {str(e)}"
+        logger.error(f"Manual webhook setup error: {e}", exc_info=True)
+        return f"خطأ: {str(e)}", 500
 
 @app.route("/check-webhook", methods=["GET"])
 def check_webhook_status():
+    """
+    Check and display detailed webhook status information.
+    Useful for debugging webhook configuration issues.
+    """
     try:
         info = bot.get_webhook_info()
-        return f"""
-        <pre>
-Webhook URL           : {info.url or 'غير مضبوط'}
-Pending updates       : {info.pending_update_count}
-Last error date       : {info.last_error_date}
-Last error message    : {info.last_error_message or 'لا يوجد'}
-        </pre>
+        
+        status_html = f"""
+        <html>
+        <head><title>Webhook Status</title></head>
+        <body style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2>🔍 Webhook Status</h2>
+            <table border="1" cellpadding="10" style="border-collapse: collapse;">
+                <tr>
+                    <td><strong>Status</strong></td>
+                    <td>{'✓ Configured' if info.url else '✗ Not configured'}</td>
+                </tr>
+                <tr>
+                    <td><strong>Webhook URL</strong></td>
+                    <td>{info.url or 'Not set'}</td>
+                </tr>
+                <tr>
+                    <td><strong>Expected URL</strong></td>
+                    <td>{WEBHOOK_URL}</td>
+                </tr>
+                <tr>
+                    <td><strong>URL Match</strong></td>
+                    <td>{'✓ Match' if info.url == WEBHOOK_URL else '✗ Mismatch'}</td>
+                </tr>
+                <tr>
+                    <td><strong>Pending Updates</strong></td>
+                    <td>{info.pending_update_count}</td>
+                </tr>
+                <tr>
+                    <td><strong>Max Connections</strong></td>
+                    <td>{info.max_connections if hasattr(info, 'max_connections') else 'N/A'}</td>
+                </tr>
+                <tr>
+                    <td><strong>Last Error Date</strong></td>
+                    <td>{info.last_error_date if info.last_error_date else 'None'}</td>
+                </tr>
+                <tr>
+                    <td><strong>Last Error Message</strong></td>
+                    <td>{info.last_error_message or 'None'}</td>
+                </tr>
+            </table>
+            <br>
+            <a href="/setwebhook" style="padding: 10px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">🔧 Setup Webhook</a>
+            <a href="/health" style="padding: 10px; background: #2196F3; color: white; text-decoration: none; border-radius: 5px; margin-left: 10px;">💚 Health Check</a>
+        </body>
+        </html>
         """
+        return status_html, 200
     except Exception as e:
-        return f"خطأ: {str(e)}"
+        logger.error(f"Error checking webhook status: {e}", exc_info=True)
+        return f"<html><body><h2>Error</h2><p>{str(e)}</p></body></html>", 500
 
 # ────────────────────────────────────────────────
 #               Flask Error Handlers
@@ -906,17 +1012,26 @@ def handle_exception(error):
 # ────────────────────────────────────────────────
 
 def setup_webhook():
-    """Setup webhook with retry logic for gunicorn compatibility"""
-    max_retries = 3
-    retry_delay = 2
+    """
+    Setup webhook with advanced retry logic and exponential backoff.
+    Ensures webhook is properly configured for production deployment.
+    """
+    max_retries = 5
+    base_delay = 2
     
     for attempt in range(max_retries):
         try:
+            logger.info(f"Webhook setup attempt {attempt + 1}/{max_retries}")
+            
             # Remove existing webhook first
             bot.remove_webhook(drop_pending_updates=True)
             logger.info("Previous webhook removed successfully")
             
-            # Set new webhook
+            # Small delay to ensure Telegram processes the removal
+            import time
+            time.sleep(1)
+            
+            # Set new webhook with comprehensive configuration
             success = bot.set_webhook(
                 url=WEBHOOK_URL,
                 drop_pending_updates=True,
@@ -925,29 +1040,75 @@ def setup_webhook():
             )
             
             if success:
-                logger.info(f"✓ Webhook setup successful → {WEBHOOK_URL}")
                 # Verify webhook was set correctly
+                time.sleep(1)  # Give Telegram time to register
                 info = bot.get_webhook_info()
-                logger.info(f"Webhook info: URL={info.url}, Pending={info.pending_update_count}")
-                return True
+                
+                if info.url == WEBHOOK_URL:
+                    logger.info(f"✓ Webhook setup successful → {WEBHOOK_URL}")
+                    logger.info(f"Webhook info: URL={info.url}, Pending={info.pending_update_count}, Max_connections={info.max_connections}")
+                    return True
+                else:
+                    logger.warning(f"Webhook URL mismatch: expected {WEBHOOK_URL}, got {info.url}")
             else:
                 logger.warning(f"Webhook setup returned False (attempt {attempt + 1}/{max_retries})")
                 
         except Exception as e:
-            logger.error(f"Webhook setup error (attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                import time
-                time.sleep(retry_delay)
-            else:
-                logger.critical(f"Failed to setup webhook after {max_retries} attempts", exc_info=True)
-                return False
+            logger.error(f"Webhook setup error (attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+            
+        # Exponential backoff before retry
+        if attempt < max_retries - 1:
+            import time
+            delay = base_delay * (2 ** attempt)  # Exponential backoff: 2, 4, 8, 16 seconds
+            logger.info(f"Retrying in {delay} seconds...")
+            time.sleep(delay)
+        else:
+            logger.critical(f"Failed to setup webhook after {max_retries} attempts")
+            return False
     
     return False
+
+def verify_webhook():
+    """
+    Periodic job to verify webhook is still properly configured.
+    Automatically reconfigures if webhook is missing or incorrect.
+    """
+    try:
+        info = bot.get_webhook_info()
+        
+        if not info.url:
+            logger.warning("Webhook not configured, attempting to set up...")
+            setup_webhook()
+        elif info.url != WEBHOOK_URL:
+            logger.warning(f"Webhook URL mismatch: expected {WEBHOOK_URL}, got {info.url}")
+            setup_webhook()
+        elif info.last_error_message:
+            logger.warning(f"Webhook has errors: {info.last_error_message}")
+            # Only reconfigure if error is recent (within last hour)
+            import time
+            if info.last_error_date and (time.time() - info.last_error_date < 3600):
+                logger.info("Recent webhook error detected, reconfiguring...")
+                setup_webhook()
+        else:
+            logger.debug(f"Webhook verification successful: {info.url}")
+    except Exception as e:
+        logger.error(f"Webhook verification failed: {e}", exc_info=True)
 
 # Run once on import (critical for Render + gunicorn)
 # This ensures webhook is set up when gunicorn loads the module
 try:
     setup_webhook()
+    
+    # Schedule periodic webhook verification (every 30 minutes)
+    # This ensures webhook stays configured even if it gets removed
+    scheduler.add_job(
+        verify_webhook,
+        'interval',
+        minutes=30,
+        id='webhook_verification',
+        replace_existing=True
+    )
+    logger.info("Webhook verification job scheduled (every 30 minutes)")
 except Exception as e:
     logger.critical(f"Critical error during initial webhook setup: {e}", exc_info=True)
 
