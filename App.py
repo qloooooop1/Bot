@@ -138,6 +138,31 @@ init_db()
 #               Helper Functions
 # ────────────────────────────────────────────────
 
+def escape_markdown(text: str) -> str:
+    """
+    Escape special characters for Telegram Markdown.
+    
+    Args:
+        text (str): Text to escape
+        
+    Returns:
+        str: Escaped text safe for Markdown parsing
+        
+    This function escapes characters that have special meaning in Markdown:
+    - Asterisks (*) used for bold
+    - Underscores (_) used for italic
+    - Backticks (`) used for code
+    - Square brackets ([]) used for links
+    
+    Note: This function is provided for potential future use. Currently, the bot
+    handles Markdown errors by falling back to plain text rather than escaping.
+    """
+    # Characters that need escaping in Telegram Markdown
+    # Using str.translate() for efficient single-pass replacement
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    translation_table = str.maketrans({char: f'\\{char}' for char in escape_chars})
+    return text.translate(translation_table)
+
 def is_user_admin_in_any_group(user_id: int) -> bool:
     """
     Check if a user is an administrator in any group that has the bot.
@@ -825,8 +850,7 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
                 bot.send_message(
                     chat_id,
                     "✅ *تم تفعيل البوت تلقائياً!*\n\n"
-                    "سيبدأ بإرسال الأذكار في الأوقات المحددة\n"
-                    "استخدم /settings لتعديل الإعدادات",
+                    "سيبدأ بإرسال الأذكار في الأوقات المحددة",
                     parse_mode="Markdown"
                 )
                 logger.info(f"Bot activated in chat {chat_id}")
@@ -862,19 +886,6 @@ def delete_service_messages(message: types.Message):
         # Fail silently as service message deletion is non-critical
         logger.debug(f"Could not delete service message in {chat_id}: {e}")
 
-def cmd_settings_markup():
-    """
-    Generate the settings inline keyboard markup.
-    
-    Returns:
-        types.InlineKeyboardMarkup: Keyboard with settings buttons
-    """
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="settings_panel")
-    )
-    return markup
-
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
@@ -886,23 +897,33 @@ def cmd_start(message: types.Message):
     2. Private Chat - User is not admin: Show welcome + buttons only
     3. Group Chat - Bot is admin: Activate bot + send settings to user's private chat
     4. Group Chat - Bot is not admin: Request admin permissions
+    
+    Enhanced error handling:
+    - Proper Markdown escaping for special characters
+    - Graceful fallback to plain text if Markdown parsing fails
+    - Detailed logging for debugging
     """
     try:
-        logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
+        logger.info(f"Start command received from user {message.from_user.id} in chat {message.chat.id} (type: {message.chat.type})")
         
         # Cache bot info to avoid redundant API calls
-        bot_info = bot.get_me()
-        bot_username = bot_info.username or "NourAdhkarBot"
+        try:
+            bot_info = bot.get_me()
+            bot_username = bot_info.username or "NourAdhkarBot"
+            logger.debug(f"Bot username retrieved: {bot_username}")
+        except Exception as e:
+            logger.error(f"Failed to get bot info: {e}", exc_info=True)
+            bot_username = "NourAdhkarBot"  # Fallback username
         
         # ──────────────────────────────────────────────────────────────
         # Scenario 1 & 2: Private Chat
         # ──────────────────────────────────────────────────────────────
         if message.chat.type == "private":
-            # Welcome message
+            # Welcome message (without escaping - will be handled by fallback if needed)
             welcome_text = (
-                f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
-                f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
-                f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
+                "*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                "أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
             )
             
             # Action buttons
@@ -913,16 +934,37 @@ def cmd_start(message: types.Message):
                 types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
             )
             
-            # Send welcome message
-            bot.send_message(
-                message.chat.id,
-                welcome_text,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
+            # Send welcome message with error handling
+            try:
+                bot.send_message(
+                    message.chat.id,
+                    welcome_text,
+                    reply_markup=markup,
+                    parse_mode="Markdown"
+                )
+                logger.debug(f"Welcome message sent successfully to user {message.from_user.id}")
+            except telebot.apihelper.ApiTelegramException as e:
+                logger.warning(f"Markdown parsing failed for welcome message: {e}, retrying without parse_mode")
+                # Fallback: send without Markdown parsing
+                plain_welcome = (
+                    "مرحبًا بك في بوت نور الأذكار ✨\n\n"
+                    "بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                    "أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
+                )
+                bot.send_message(
+                    message.chat.id,
+                    plain_welcome,
+                    reply_markup=markup
+                )
+                logger.info(f"Welcome message sent as plain text to user {message.from_user.id}")
             
             # Check if user is admin in any group
-            is_admin = is_user_admin_in_any_group(message.from_user.id)
+            try:
+                is_admin = is_user_admin_in_any_group(message.from_user.id)
+                logger.debug(f"Admin check for user {message.from_user.id}: {is_admin}")
+            except Exception as e:
+                logger.error(f"Error checking admin status for user {message.from_user.id}: {e}", exc_info=True)
+                is_admin = False
             
             if is_admin:
                 # Send settings panel for admin users
@@ -930,13 +972,22 @@ def cmd_start(message: types.Message):
                 settings_markup.add(
                     types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
                 )
-                bot.send_message(
-                    message.chat.id,
-                    "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
-                    reply_markup=settings_markup,
-                    parse_mode="Markdown"
-                )
-                logger.info(f"/start in private chat from admin user {message.from_user.id}")
+                try:
+                    bot.send_message(
+                        message.chat.id,
+                        "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                        reply_markup=settings_markup,
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"/start in private chat from admin user {message.from_user.id}")
+                except telebot.apihelper.ApiTelegramException as e:
+                    logger.warning(f"Failed to send settings panel with Markdown: {e}, retrying as plain text")
+                    bot.send_message(
+                        message.chat.id,
+                        "لوحة إعدادات البوت\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                        reply_markup=settings_markup
+                    )
+                    logger.info(f"/start settings panel sent as plain text to admin user {message.from_user.id}")
             else:
                 logger.info(f"/start in private chat from non-admin user {message.from_user.id}")
         
@@ -948,17 +999,21 @@ def cmd_start(message: types.Message):
             try:
                 user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
                 user_is_admin = user_status in ["administrator", "creator"]
+                logger.debug(f"User {message.from_user.id} admin status in group {message.chat.id}: {user_is_admin} (status: {user_status})")
             except Exception as e:
-                logger.warning(f"Could not check user admin status: {e}")
+                logger.warning(f"Could not check user admin status in group {message.chat.id}: {e}")
                 user_is_admin = False
             
             if user_is_admin:
-                # User is admin - activate bot and send settings to private chat
-                bot.send_message(
-                    message.chat.id,
-                    f"تم تفعيل البوت! اذهب إلى الخاص (\\@{bot_username}) لتعديل الإعدادات",
-                    parse_mode="Markdown"
-                )
+                # User is admin - activate bot and send message
+                try:
+                    bot.send_message(
+                        message.chat.id,
+                        f"تم تفعيل البوت! اذهب إلى الخاص (@{bot_username}) لتعديل الإعدادات"
+                    )
+                    logger.debug(f"Activation message sent to group {message.chat.id}")
+                except Exception as e:
+                    logger.error(f"Failed to send activation message to group {message.chat.id}: {e}", exc_info=True)
                 
                 # Try to send settings panel to user's private chat
                 try:
@@ -966,83 +1021,59 @@ def cmd_start(message: types.Message):
                     settings_markup.add(
                         types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
                     )
-                    bot.send_message(
-                        message.from_user.id,
-                        "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
-                        reply_markup=settings_markup,
-                        parse_mode="Markdown"
-                    )
-                    logger.info(f"Settings panel sent to admin user {message.from_user.id} from group {message.chat.id}")
+                    try:
+                        bot.send_message(
+                            message.from_user.id,
+                            "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                            reply_markup=settings_markup,
+                            parse_mode="Markdown"
+                        )
+                        logger.info(f"Settings panel sent to admin user {message.from_user.id} from group {message.chat.id}")
+                    except telebot.apihelper.ApiTelegramException as e:
+                        if "can't parse entities" in str(e).lower():
+                            logger.warning(f"Markdown parsing failed for settings panel, retrying as plain text")
+                            bot.send_message(
+                                message.from_user.id,
+                                "لوحة إعدادات البوت\n\nاضغط على الزر أدناه لعرض الإعدادات:",
+                                reply_markup=settings_markup
+                            )
+                            logger.info(f"Settings panel sent as plain text to user {message.from_user.id}")
+                        else:
+                            raise  # Re-raise if it's a different error
+                except telebot.apihelper.ApiTelegramException as e:
+                    if "blocked" in str(e).lower() or "user not found" in str(e).lower():
+                        logger.warning(f"Could not send settings to user {message.from_user.id}: User has not started bot yet")
+                        try:
+                            bot.send_message(
+                                message.chat.id,
+                                f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات."
+                            )
+                        except Exception as inner_e:
+                            logger.error(f"Failed to send private chat reminder to group {message.chat.id}: {inner_e}")
+                    else:
+                        logger.error(f"Unexpected error sending settings to user {message.from_user.id}: {e}", exc_info=True)
                 except Exception as e:
-                    logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
-                    bot.send_message(
-                        message.chat.id,
-                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (\\@{bot_username}) لاستلام لوحة الإعدادات.",
-                        parse_mode="Markdown"
-                    )
+                    logger.error(f"Error sending settings panel to user {message.from_user.id}: {e}", exc_info=True)
             else:
                 # User is not admin
-                bot.send_message(
-                    message.chat.id,
-                    "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل",
-                    parse_mode="Markdown"
-                )
-                logger.info(f"/start in group {message.chat.id} from non-admin user {message.from_user.id}")
+                try:
+                    bot.send_message(
+                        message.chat.id,
+                        "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل"
+                    )
+                    logger.info(f"/start in group {message.chat.id} from non-admin user {message.from_user.id}")
+                except Exception as e:
+                    logger.error(f"Failed to send non-admin message to group {message.chat.id}: {e}", exc_info=True)
                 
     except Exception as e:
-        logger.error(f"Error in cmd_start: {e}", exc_info=True)
+        logger.error(f"Unexpected error in cmd_start from user {message.from_user.id} in chat {message.chat.id}: {e}", exc_info=True)
         try:
             bot.reply_to(message, "حدث خطأ، يرجى المحاولة مرة أخرى")
-        except Exception:
+            logger.debug(f"Error message sent to user {message.from_user.id}")
+        except Exception as inner_e:
+            logger.critical(f"Failed to send error message to user {message.from_user.id}: {inner_e}")
             # Final fallback - nothing we can do if even error message fails
             pass
-
-@bot.message_handler(commands=["settings"])
-def cmd_settings(message: types.Message):
-    if message.chat.type == "private":
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
-        return
-
-    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
-        return
-
-    settings = get_chat_settings(message.chat.id)
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
-
-    btns = [
-        ("morning_azkar", "🌅 أذكار الصباح"),
-        ("evening_azkar", "🌙 أذكار المساء"),
-        ("friday_sura", "📿 سورة الكهف"),
-        ("friday_dua", "🕌 أدعية الجمعة"),
-        ("sleep_message", "😴 رسالة النوم"),
-        ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
-    ]
-
-    for key, label in btns:
-        status = "✓" if settings[key] else "✗"
-        markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
-
-    text = (
-        "⚙️ *لوحة التحكم*\n\n"
-        f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-        "الأوقات المجدولة:\n"
-        f"🌅 الصباح: {settings['morning_time']}\n"
-        f"🌙 المساء: {settings['evening_time']}\n"
-        f"😴 النوم: {settings['sleep_time']}\n"
-        f"📿 سورة الكهف: الجمعة 09:00\n"
-        f"🕌 دعاء الجمعة: الجمعة 10:00\n\n"
-        "اضغط لتغيير الإعدادات"
-    )
-
-    bot.send_message(
-        message.chat.id,
-        text,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
-    logger.info(f"/settings opened by {message.from_user.id} in {message.chat.id}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
 def callback_toggle(call: types.CallbackQuery):
@@ -1114,8 +1145,8 @@ def callback_open_settings(call: types.CallbackQuery):
             "🕌 أدعية الجمعة\n"
             "😴 رسالة النوم\n"
             "🗑️ حذف رسائل الخدمة\n\n"
-            "*للتعديل:*\n"
-            "استخدم أمر `/settings` في المجموعة التي تريد تعديل إعداداتها"
+            "*ملاحظة:*\n"
+            "يمكنك استخدام الأوامر المخصصة في المجموعة للتحكم في الإعدادات"
         )
         
         # Add advanced settings button
@@ -1175,8 +1206,7 @@ def callback_advanced_settings(call: types.CallbackQuery):
             "تفعيل/تعطيل إرسال الوسائط مع الأذكار\n\n"
             "*إعدادات المواعيد:*\n"
             "تخصيص أوقات إرسال الأذكار\n\n"
-            "*ملاحظة:* هذه الإعدادات تطبق على جميع المجموعات\n"
-            "للتعديل الفردي لكل مجموعة، استخدم `/settings` في المجموعة"
+            "*ملاحظة:* هذه الإعدادات تطبق على جميع المجموعات"
         )
         
         # Create keyboard with options
@@ -1229,11 +1259,7 @@ def callback_media_settings(call: types.CallbackQuery):
             "• صور إسلامية\n"
             "• مقاطع فيديو\n"
             "• ملفات PDF\n\n"
-            "*ملاحظة:* يتم اختيار الوسائط عشوائياً من قاعدة البيانات\n\n"
-            "للتفعيل في مجموعة معينة:\n"
-            "1. اذهب للمجموعة\n"
-            "2. استخدم `/settings`\n"
-            "3. فعّل الميزات المطلوبة"
+            "*ملاحظة:* يتم اختيار الوسائط عشوائياً من قاعدة البيانات"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
