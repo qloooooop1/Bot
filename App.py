@@ -606,12 +606,27 @@ def send_azkar(chat_id, azkar_type):
         print(f"خطأ في إرسال الأذكار: {e}")
 
 def send_random_content(chat_id):
-    """إرسال محتوى عشوائي (دعاء، آية، حديث)"""
+    """إرسال محتوى عشوائي (دعاء، آية، حديث) مع مراعاة المناسبات الإسلامية"""
     try:
         settings = get_chat_settings(chat_id)
         if not settings['random_content']:
             return
-            
+        
+        now = datetime.now(TIMEZONE)
+        
+        # التحقق من المناسبات الخاصة
+        # يوم الجمعة - زيادة احتمالية أدعية الجمعة
+        if now.weekday() == 4:  # الجمعة
+            if random.random() < 0.4:  # 40% احتمالية
+                message = random.choice(FRIDAY_DUAS)
+                bot.send_message(chat_id, message, parse_mode='Markdown')
+                return
+        
+        # ملاحظة: للتحقق الدقيق من التواريخ الهجرية (رمضان، عرفة، إلخ)
+        # يمكن استخدام مكتبة hijri-converter، لكن للبساطة نستخدم المحتوى العام
+        # يمكن للمطور إضافة المكتبة لاحقاً للدعم الكامل
+        
+        # اختيار نوع المحتوى العشوائي
         content_type = random.choice(['dua', 'quran', 'hadith'])
         
         if content_type == 'dua':
@@ -1054,6 +1069,44 @@ def set_interval(message):
         
     except:
         bot.reply_to(message, "❌ صيغة خاطئة\n\nالاستخدام: /setinterval <دقائق>\nمثال: /setinterval 120")
+
+@bot.message_handler(commands=['send_special'])
+def send_special_content(message):
+    """إرسال محتوى خاص (رمضان، عرفة، عيد) للمشرفين"""
+    if message.chat.type not in ['group', 'supergroup']:
+        bot.reply_to(message, "❌ هذا الأمر يعمل فقط في المجموعات")
+        return
+    
+    if not is_user_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ هذا الأمر للمشرفين فقط")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "❌ الاستخدام: /send_special <نوع>\n\nالأنواع المتاحة:\n• ramadan - أدعية رمضان\n• arafah - أدعية عرفة\n• eid - أدعية العيد\n• last10 - أدعية العشر الأواخر")
+            return
+        
+        event_type = parts[1].lower()
+        
+        if event_type == 'ramadan':
+            message_text = random.choice(RAMADAN_DUAS)
+        elif event_type == 'arafah':
+            message_text = random.choice(ARAFAH_DUAS)
+        elif event_type == 'eid':
+            message_text = random.choice(EID_DUAS)
+        elif event_type == 'last10':
+            message_text = random.choice(LAST_TEN_DAYS_DUAS)
+        else:
+            bot.reply_to(message, "❌ نوع غير معروف\n\nالأنواع المتاحة:\n• ramadan\n• arafah\n• eid\n• last10")
+            return
+        
+        bot.send_message(message.chat.id, message_text, parse_mode='Markdown')
+        bot.reply_to(message, "✅ تم إرسال المحتوى")
+        
+    except Exception as e:
+        print(f"خطأ في send_special: {e}")
+        bot.reply_to(message, "❌ حدث خطأ أثناء إرسال المحتوى")
 
 # معالج للكشف عن إضافة البوت كمشرف
 @bot.message_handler(content_types=['new_chat_members'])
