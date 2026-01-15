@@ -481,25 +481,31 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid diverse azkar setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE diverse_azkar_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE diverse_azkar_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating diverse azkar setting: {e}", exc_info=True)
+        conn.close()
+        raise
 
 # ────────────────────────────────────────────────
 #               Ramadan Settings Functions
@@ -507,7 +513,32 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
 
 def get_ramadan_settings(chat_id: int) -> dict:
     """Get Ramadan settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_ramadan_settings(chat_id)
+        
+        conn.close()
+        return {
+            "chat_id": row[0],
+            "ramadan_enabled": bool(row[1]),
+            "laylat_alqadr_enabled": bool(row[2]),
+            "last_ten_days_enabled": bool(row[3]),
+            "iftar_dua_enabled": bool(row[4]),
+            "media_type": row[5]
+        }
+    except Exception as e:
+        logger.error(f"Error getting ramadan settings: {e}", exc_info=True)
+        conn.close()
+        raise
     c = conn.cursor()
     c.execute("SELECT * FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
     row = c.fetchone()
@@ -539,25 +570,31 @@ def update_ramadan_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid ramadan setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE ramadan_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE ramadan_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating ramadan setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Hajj & Eid Settings Functions
@@ -565,27 +602,34 @@ def update_ramadan_setting(chat_id: int, key: str, value):
 
 def get_hajj_eid_settings(chat_id: int) -> dict:
     """Get Hajj and Eid settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_hajj_eid_settings(chat_id)
+        
+        result = {
+            "chat_id": row[0],
+            "arafah_day_enabled": bool(row[1]),
+            "eid_eve_enabled": bool(row[2]),
+            "eid_day_enabled": bool(row[3]),
+            "eid_adha_enabled": bool(row[4]),
+            "hajj_enabled": bool(row[5]),
+            "media_type": row[6]
+        }
+        return result
+    except Exception as e:
+        logger.error(f"Error getting hajj_eid settings: {e}", exc_info=True)
+        raise
+    finally:
         conn.close()
-        return get_hajj_eid_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "arafah_day_enabled": bool(row[1]),
-        "eid_eve_enabled": bool(row[2]),
-        "eid_day_enabled": bool(row[3]),
-        "eid_adha_enabled": bool(row[4]),
-        "hajj_enabled": bool(row[5]),
-        "media_type": row[6]
-    }
 
 def update_hajj_eid_setting(chat_id: int, key: str, value):
     """Update a specific Hajj/Eid setting."""
@@ -598,25 +642,31 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid hajj_eid setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE hajj_eid_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE hajj_eid_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating hajj_eid setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Fasting Reminders Settings Functions
@@ -624,24 +674,31 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
 
 def get_fasting_reminders_settings(chat_id: int) -> dict:
     """Get fasting reminders settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM fasting_reminders WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO fasting_reminders (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_fasting_reminders_settings(chat_id)
+        
+        result = {
+            "chat_id": row[0],
+            "monday_thursday_enabled": bool(row[1]),
+            "arafah_reminder_enabled": bool(row[2]),
+            "reminder_time": row[3]
+        }
+        return result
+    except Exception as e:
+        logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
+        raise
+    finally:
         conn.close()
-        return get_fasting_reminders_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "monday_thursday_enabled": bool(row[1]),
-        "arafah_reminder_enabled": bool(row[2]),
-        "reminder_time": row[3]
-    }
 
 def update_fasting_reminder_setting(chat_id: int, key: str, value):
     """Update a specific fasting reminder setting."""
@@ -653,25 +710,31 @@ def update_fasting_reminder_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid fasting reminder setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM fasting_reminders WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO fasting_reminders (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "reminder_time":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE fasting_reminders SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated fasting reminder {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "reminder_time":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE fasting_reminders SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated fasting reminder {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating fasting reminder setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
