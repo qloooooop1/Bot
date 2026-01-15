@@ -2557,6 +2557,7 @@ def callback_select_group(call: types.CallbackQuery):
             types.InlineKeyboardButton("🌅🌙 أذكار الصباح والمساء", callback_data=f"morning_evening_settings_{chat_id}"),
             types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data=f"friday_settings_{chat_id}"),
             types.InlineKeyboardButton("✨ أذكار متنوعة", callback_data=f"diverse_azkar_settings_{chat_id}"),
+            types.InlineKeyboardButton("⚙️ إعدادات عامة", callback_data=f"general_settings_{chat_id}"),
             types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data=f"ramadan_settings_{chat_id}"),
             types.InlineKeyboardButton("🕋 إعدادات الحج", callback_data=f"hajj_eid_settings_{chat_id}"),
             types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data=f"fasting_reminders_{chat_id}")
@@ -2752,6 +2753,324 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_morning_evening_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("general_settings"))
+def callback_general_settings(call: types.CallbackQuery):
+    """
+    Handle callback for general settings panel.
+    Shows sleep message and service message deletion controls.
+    """
+    try:
+        # Extract chat_id from callback data if present
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
+        else:
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "الإعدادات العامة")
+        
+        # Get settings
+        settings = get_chat_settings(chat_id)
+        sleep_status = "✅ مفعّل" if settings.get('sleep_message', 1) else "❌ معطّل"
+        sleep_time = settings.get('sleep_time', '22:00')
+        delete_service_status = "✅ مفعّل" if settings.get('delete_service_messages', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "⚙️ *الإعدادات العامة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• رسالة النوم: {sleep_status} (الوقت: {sleep_time})\n"
+            f"• حذف رسائل النظام: {delete_service_status}\n\n"
+            "*رسالة النوم:*\n"
+            "• يتم إرسال رسالة مساء الخير مع أذكار النوم\n"
+            "• الوقت الافتراضي: 22:00\n"
+            "• قابلة للتخصيص\n\n"
+            "*حذف رسائل النظام:*\n"
+            "• عند التفعيل، يتم حذف رسائل النظام تلقائياً\n"
+            "• الرسائل المشمولة:\n"
+            "  - رسائل انضمام/مغادرة الأعضاء\n"
+            "  - رسائل تغيير اسم المجموعة\n"
+            "  - رسائل تثبيت الرسائل\n"
+            "  - رسائل بدء/انتهاء المكالمات الصوتية\n"
+            "  - وغيرها من رسائل النظام\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل وتخصيص الأوقات"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Add toggle buttons
+        sleep_icon = "✅" if settings.get('sleep_message', 1) else "❌"
+        delete_icon = "✅" if settings.get('delete_service_messages', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{sleep_icon} رسالة النوم", 
+                callback_data=f"toggle_sleep_message_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{delete_icon} حذف رسائل النظام", 
+                callback_data=f"toggle_delete_service_messages_{chat_id}"
+            )
+        )
+        
+        # Add time preset button for sleep message
+        markup.add(
+            types.InlineKeyboardButton("😴 أوقات شائعة للنوم", callback_data=f"sleep_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"General settings displayed for user {call.from_user.id} in chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_general_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sleep_time_presets"))
+def callback_sleep_time_presets(call: types.CallbackQuery):
+    """Show preset times for sleep message with clickable time buttons."""
+    try:
+        # Extract chat_id from callback data if present
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
+        else:
+            bot.answer_callback_query(call.id, "⚠️ يرجى تحديد مجموعة أولاً", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "اختر الوقت")
+        
+        # Get current time setting
+        settings = get_chat_settings(chat_id)
+        current_time = settings.get('sleep_time', '22:00')
+        
+        settings_text = (
+            "😴 *تخصيص وقت رسالة النوم*\n\n"
+            f"الوقت الحالي: *{current_time}*\n\n"
+            "*اختر وقتاً من الأوقات الشائعة:*\n"
+            "• 21:00 - مساءً\n"
+            "• 22:00 - الافتراضي\n"
+            "• 23:00 - ليلاً\n"
+            "• 00:00 - منتصف الليل\n\n"
+            "*أو استخدم الأمر في المجموعة:*\n"
+            "`/settime sleep HH:MM`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        # Add clickable time buttons
+        time_options = [
+            ("21:00", "21:00 🌙"),
+            ("22:00", "22:00 ⭐"),
+            ("23:00", "23:00 🌃"),
+            ("00:00", "00:00 🌌")
+        ]
+        
+        for time_value, time_label in time_options:
+            # Highlight current time
+            if time_value == current_time:
+                time_label = f"✅ {time_label}"
+            markup.add(
+                types.InlineKeyboardButton(
+                    time_label,
+                    callback_data=f"set_sleep_time_{time_value.replace(':', '')}_{chat_id}"
+                )
+            )
+        
+        # Add back button
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data=f"general_settings_{chat_id}")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in callback_sleep_time_presets: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_sleep_time_"))
+def callback_set_sleep_time(call: types.CallbackQuery):
+    """Handle setting sleep message time from preset buttons."""
+    try:
+        # Parse callback data: set_sleep_time_HHMM_chat_id
+        parts = call.data.split("_")
+        if len(parts) < 4:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        time_str = parts[3]  # e.g., "2100"
+        chat_id = int(parts[4])
+        
+        # Convert time string to HH:MM format
+        time_formatted = f"{time_str[:2]}:{time_str[2:]}"
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Update the time setting
+        update_chat_setting(chat_id, "sleep_time", time_formatted)
+        schedule_chat_jobs(chat_id)
+        
+        bot.answer_callback_query(call.id, f"✅ تم تعيين وقت النوم: {time_formatted}")
+        
+        # Refresh the time presets view
+        call.data = f"sleep_time_presets_{chat_id}"
+        callback_sleep_time_presets(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_set_sleep_time: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_sleep_message_") or call.data.startswith("toggle_delete_service_messages_"))
+def callback_toggle_general_settings(call: types.CallbackQuery):
+    """
+    Handle toggle callbacks for sleep message and service message deletion.
+    Format: toggle_sleep_message_{chat_id} or toggle_delete_service_messages_{chat_id}
+    """
+    try:
+        # Parse callback data
+        parts = call.data.split("_")
+        if len(parts) < 3:
+            bot.answer_callback_query(call.id, "⚠️ خطأ في البيانات", show_alert=True)
+            return
+        
+        chat_id = int(parts[-1])
+        
+        # Determine the setting type
+        if "sleep" in call.data:
+            setting_key = "sleep_message"
+            setting_name = "رسالة النوم"
+        elif "delete" in call.data:
+            setting_key = "delete_service_messages"
+            setting_name = "حذف رسائل النظام"
+        else:
+            bot.answer_callback_query(call.id, "⚠️ إعداد غير معروف", show_alert=True)
+            return
+        
+        # Verify user is admin of this chat
+        if not is_user_admin_of_chat(call.from_user.id, chat_id):
+            bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+            return
+        
+        # Get current settings and toggle
+        settings = get_chat_settings(chat_id)
+        new_value = not settings.get(setting_key, 1)
+        update_chat_setting(chat_id, setting_key, new_value)
+        
+        # Reschedule jobs if it's sleep_message
+        if setting_key == "sleep_message":
+            schedule_chat_jobs(chat_id)
+        
+        # Prepare updated message
+        settings = get_chat_settings(chat_id)
+        sleep_status = "✅ مفعّل" if settings.get('sleep_message', 1) else "❌ معطّل"
+        sleep_time = settings.get('sleep_time', '22:00')
+        delete_service_status = "✅ مفعّل" if settings.get('delete_service_messages', 1) else "❌ معطّل"
+        
+        settings_text = (
+            "⚙️ *الإعدادات العامة*\n\n"
+            f"*الحالة الحالية:*\n"
+            f"• رسالة النوم: {sleep_status} (الوقت: {sleep_time})\n"
+            f"• حذف رسائل النظام: {delete_service_status}\n\n"
+            "*رسالة النوم:*\n"
+            "• يتم إرسال رسالة مساء الخير مع أذكار النوم\n"
+            "• الوقت الافتراضي: 22:00\n"
+            "• قابلة للتخصيص\n\n"
+            "*حذف رسائل النظام:*\n"
+            "• عند التفعيل، يتم حذف رسائل النظام تلقائياً\n"
+            "• الرسائل المشمولة:\n"
+            "  - رسائل انضمام/مغادرة الأعضاء\n"
+            "  - رسائل تغيير اسم المجموعة\n"
+            "  - رسائل تثبيت الرسائل\n"
+            "  - رسائل بدء/انتهاء المكالمات الصوتية\n"
+            "  - وغيرها من رسائل النظام\n\n"
+            "*التحكم:*\n"
+            "استخدم الأزرار أدناه للتفعيل/التعطيل وتخصيص الأوقات"
+        )
+        
+        # Update markup with new status
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        sleep_icon = "✅" if settings.get('sleep_message', 1) else "❌"
+        delete_icon = "✅" if settings.get('delete_service_messages', 1) else "❌"
+        
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{sleep_icon} رسالة النوم", 
+                callback_data=f"toggle_sleep_message_{chat_id}"
+            ),
+            types.InlineKeyboardButton(
+                f"{delete_icon} حذف رسائل النظام", 
+                callback_data=f"toggle_delete_service_messages_{chat_id}"
+            )
+        )
+        
+        # Add time preset button for sleep message
+        markup.add(
+            types.InlineKeyboardButton("😴 أوقات شائعة للنوم", callback_data=f"sleep_time_presets_{chat_id}")
+        )
+        
+        # Add back button
+        chat_id_encoded = base64.b64encode(str(chat_id).encode()).decode()
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data=f"select_group_{chat_id_encoded}"))
+        
+        # Edit message with updated status
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        # Answer callback with confirmation
+        status_text = "تم التفعيل ✅" if new_value else "تم التعطيل ❌"
+        bot.answer_callback_query(call.id, f"{setting_name}: {status_text}")
+        
+        logger.info(f"User {call.from_user.id} toggled {setting_key} to {new_value} for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_general_settings: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
