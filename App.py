@@ -1343,7 +1343,7 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
                     chat_id,
                     "✅ *تم تفعيل البوت تلقائياً!*\n\n"
                     "سيبدأ بإرسال الأذكار في الأوقات المحددة\n"
-                    "استخدم /settings لتعديل الإعدادات",
+                    "استخدم /start لتعديل الإعدادات",
                     parse_mode="Markdown"
                 )
                 logger.info(f"Bot activated in chat {chat_id}")
@@ -1395,14 +1395,14 @@ def cmd_settings_markup():
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
-    Handle /start command in both private chats and groups.
-    Updated to show different interfaces based on chat type and admin status.
+    Handle /start command - replaces /settings functionality.
+    Shows advanced control panel based on chat type and admin status.
     
     Scenarios:
-    1. Private Chat - User is admin in any group: Show welcome + settings panel + buttons
-    2. Private Chat - User is not admin: Show welcome + buttons only
-    3. Group Chat - Bot is admin: Activate bot + send settings to user's private chat
-    4. Group Chat - Bot is not admin: Request admin permissions
+    1. Private Chat - User is admin: Show welcome + advanced settings panel
+    2. Private Chat - User is not admin: Show welcome + guidance to add bot as admin
+    3. Group Chat - User is admin: Show settings panel in group
+    4. Group Chat - User is not admin: Request to make bot admin with buttons
     """
     try:
         logger.info(f"Start command received from {message.from_user.id} in chat {message.chat.id}")
@@ -1415,46 +1415,56 @@ def cmd_start(message: types.Message):
         # Scenario 1 & 2: Private Chat
         # ──────────────────────────────────────────────────────────────
         if message.chat.type == "private":
-            # Welcome message
-            welcome_text = (
-                f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
-                f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
-                f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات."
-            )
-            
-            # Action buttons
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
-                types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
-                types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
-            )
-            
-            # Send welcome message
-            bot.send_message(
-                message.chat.id,
-                welcome_text,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-            
             # Check if user is admin in any group
             is_admin = is_user_admin_in_any_group(message.from_user.id)
             
             if is_admin:
-                # Send settings panel for admin users
-                settings_markup = types.InlineKeyboardMarkup(row_width=1)
-                settings_markup.add(
-                    types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
+                # Welcome message for admin
+                welcome_text = (
+                    f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                    f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                    f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
+                    f"*أنت مشرف مثبت* ✅\n"
+                    f"يمكنك الآن الوصول إلى لوحة التحكم المتقدمة"
                 )
+                
+                # Advanced control panel markup
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("⚙️ لوحة التحكم المتقدمة", callback_data="open_settings")
+                )
+                
                 bot.send_message(
                     message.chat.id,
-                    "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
-                    reply_markup=settings_markup,
+                    welcome_text,
+                    reply_markup=markup,
                     parse_mode="Markdown"
                 )
                 logger.info(f"/start in private chat from admin user {message.from_user.id}")
             else:
+                # Non-admin user - show guidance
+                welcome_text = (
+                    f"*مرحبًا بك في بوت نور الأذكار* ✨\n\n"
+                    f"بوت نور الذكر يرسل أذكار الصباح والمساء، سورة الكهف يوم الجمعة، "
+                    f"أدعية الجمعة، رسائل النوم تلقائيًا في المجموعات.\n\n"
+                    f"⚠️ *للوصول إلى لوحة التحكم:*\n"
+                    f"يجب عليك أولاً إضافة البوت كمشرف في إحدى المجموعات"
+                )
+                
+                # Action buttons
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعتك", url=f"https://t.me/{bot_username}?startgroup=true"),
+                    types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+                    types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
+                )
+                
+                bot.send_message(
+                    message.chat.id,
+                    welcome_text,
+                    reply_markup=markup,
+                    parse_mode="Markdown"
+                )
                 logger.info(f"/start in private chat from non-admin user {message.from_user.id}")
         
         # ──────────────────────────────────────────────────────────────
@@ -1470,38 +1480,87 @@ def cmd_start(message: types.Message):
                 user_is_admin = False
             
             if user_is_admin:
-                # User is admin - activate bot and send settings to private chat
+                # User is admin - show settings panel directly in group
+                settings = get_chat_settings(message.chat.id)
+                diverse_settings = get_diverse_azkar_settings(message.chat.id)
+
+                markup = types.InlineKeyboardMarkup(row_width=2)
+
+                btns = [
+                    ("morning_azkar", "🌅 أذكار الصباح"),
+                    ("evening_azkar", "🌙 أذكار المساء"),
+                    ("friday_sura", "📿 سورة الكهف"),
+                    ("friday_dua", "🕌 أدعية الجمعة"),
+                    ("sleep_message", "😴 رسالة النوم"),
+                    ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
+                ]
+
+                for key, label in btns:
+                    status = "✅" if settings[key] else "❌"
+                    markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+                
+                # Add diverse azkar button with interval info
+                diverse_status = "✅" if diverse_settings["enabled"] else "❌"
+                diverse_label = f"✨ الأدعية المتنوعة {diverse_status}"
+                markup.add(types.InlineKeyboardButton(diverse_label, callback_data="group_diverse_settings"))
+                
+                # Add special settings buttons
+                markup.add(
+                    types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
+                    types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
+                )
+
+                interval_text = ""
+                if diverse_settings["enabled"]:
+                    interval_minutes = diverse_settings["interval_minutes"]
+                    if interval_minutes < 60:
+                        interval_text = f"\n✨ الأدعية المتنوعة: كل {interval_minutes} دقيقة"
+                    elif interval_minutes < 1440:
+                        hours = interval_minutes // 60
+                        interval_text = f"\n✨ الأدعية المتنوعة: كل {hours} ساعة"
+                    else:
+                        interval_text = f"\n✨ الأدعية المتنوعة: يومياً"
+
+                text = (
+                    "⚙️ *لوحة التحكم المتقدمة*\n\n"
+                    f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
+                    "الأوقات المجدولة:\n"
+                    f"🌅 الصباح: {settings['morning_time']}\n"
+                    f"🌙 المساء: {settings['evening_time']}\n"
+                    f"😴 النوم: {settings['sleep_time']}\n"
+                    f"📿 سورة الكهف: الجمعة 09:00\n"
+                    f"🕌 دعاء الجمعة: الجمعة 10:00"
+                    f"{interval_text}\n\n"
+                    "اضغط لتغيير الإعدادات"
+                )
+
                 bot.send_message(
                     message.chat.id,
-                    f"تم تفعيل البوت! اذهب إلى الخاص (\\@{bot_username}) لتعديل الإعدادات",
-                    parse_mode="Markdown"
+                    text,
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
+                logger.info(f"/start opened settings by {message.from_user.id} in {message.chat.id}")
+            else:
+                # User is not admin - show guidance with buttons
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(
+                    types.InlineKeyboardButton("➕ إضافة البوت كمشرف", url=f"https://t.me/{bot_username}?startgroup=true"),
+                    types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+                    types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod")
                 )
                 
-                # Try to send settings panel to user's private chat
-                try:
-                    settings_markup = types.InlineKeyboardMarkup(row_width=1)
-                    settings_markup.add(
-                        types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="open_settings")
-                    )
-                    bot.send_message(
-                        message.from_user.id,
-                        "*لوحة إعدادات البوت*\n\nاضغط على الزر أدناه لعرض الإعدادات:",
-                        reply_markup=settings_markup,
-                        parse_mode="Markdown"
-                    )
-                    logger.info(f"Settings panel sent to admin user {message.from_user.id} from group {message.chat.id}")
-                except Exception as e:
-                    logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
-                    bot.send_message(
-                        message.chat.id,
-                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (\\@{bot_username}) لاستلام لوحة الإعدادات.",
-                        parse_mode="Markdown"
-                    )
-            else:
-                # User is not admin
                 bot.send_message(
                     message.chat.id,
-                    "يرجى جعل البوت مشرفًا في المجموعة ليتمكن من العمل",
+                    "⚠️ *يرجى تثبيت البوت كمشرف في المجموعة*\n\n"
+                    "لتتمكن من استخدام جميع ميزات البوت، يجب تثبيته كمشرف في المجموعة.\n\n"
+                    "*الميزات المتاحة:*\n"
+                    "• 🌅 أذكار الصباح والمساء\n"
+                    "• 📿 سورة الكهف يوم الجمعة\n"
+                    "• 🕌 أدعية الجمعة\n"
+                    "• 🌙 إعدادات رمضان والحج\n"
+                    "• ✨ أدعية متنوعة قابلة للتخصيص",
+                    reply_markup=markup,
                     parse_mode="Markdown"
                 )
                 logger.info(f"/start in group {message.chat.id} from non-admin user {message.from_user.id}")
@@ -1516,74 +1575,20 @@ def cmd_start(message: types.Message):
 
 @bot.message_handler(commands=["settings"])
 def cmd_settings(message: types.Message):
-    if message.chat.type == "private":
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
-        return
-
-    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
-        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
-        return
-
-    settings = get_chat_settings(message.chat.id)
-    diverse_settings = get_diverse_azkar_settings(message.chat.id)
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
-
-    btns = [
-        ("morning_azkar", "🌅 أذكار الصباح"),
-        ("evening_azkar", "🌙 أذكار المساء"),
-        ("friday_sura", "📿 سورة الكهف"),
-        ("friday_dua", "🕌 أدعية الجمعة"),
-        ("sleep_message", "😴 رسالة النوم"),
-        ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
-    ]
-
-    for key, label in btns:
-        status = "✓" if settings[key] else "✗"
-        markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
-    
-    # Add diverse azkar button with interval info
-    diverse_status = "✓" if diverse_settings["enabled"] else "✗"
-    diverse_label = f"✨ الأدعية المتنوعة {diverse_status}"
-    markup.add(types.InlineKeyboardButton(diverse_label, callback_data="group_diverse_settings"))
-    
-    # Add special settings buttons
-    markup.add(
-        types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
-        types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
-    )
-
-    interval_text = ""
-    if diverse_settings["enabled"]:
-        interval_minutes = diverse_settings["interval_minutes"]
-        if interval_minutes < 60:
-            interval_text = f"\n✨ الأدعية المتنوعة: كل {interval_minutes} دقيقة"
-        elif interval_minutes < 1440:
-            hours = interval_minutes // 60
-            interval_text = f"\n✨ الأدعية المتنوعة: كل {hours} ساعة"
-        else:
-            interval_text = f"\n✨ الأدعية المتنوعة: يومياً"
-
-    text = (
-        "⚙️ *لوحة التحكم*\n\n"
-        f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-        "الأوقات المجدولة:\n"
-        f"🌅 الصباح: {settings['morning_time']}\n"
-        f"🌙 المساء: {settings['evening_time']}\n"
-        f"😴 النوم: {settings['sleep_time']}\n"
-        f"📿 سورة الكهف: الجمعة 09:00\n"
-        f"🕌 دعاء الجمعة: الجمعة 10:00"
-        f"{interval_text}\n\n"
-        "اضغط لتغيير الإعدادات"
-    )
-
-    bot.send_message(
-        message.chat.id,
-        text,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
-    logger.info(f"/settings opened by {message.from_user.id} in {message.chat.id}")
+    """
+    Legacy /settings command - redirects to /start.
+    The /start command now handles all settings functionality.
+    """
+    try:
+        bot.send_message(
+            message.chat.id,
+            "ℹ️ *تم دمج الإعدادات مع الأمر /start*\n\n"
+            "يرجى استخدام الأمر `/start` للوصول إلى لوحة التحكم المتقدمة",
+            parse_mode="Markdown"
+        )
+        logger.info(f"/settings redirect message sent to {message.from_user.id} in {message.chat.id}")
+    except Exception as e:
+        logger.error(f"Error in cmd_settings: {e}", exc_info=True)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
@@ -1610,7 +1615,7 @@ def callback_toggle(call: types.CallbackQuery):
     ]
 
     for k, label in btns:
-        status = "✓" if get_chat_settings(call.message.chat.id)[k] else "✗"
+        status = "✅" if get_chat_settings(call.message.chat.id)[k] else "❌"
         markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{k}"))
 
     text = call.message.text.split("\n\n")[0] + "\n\n" + call.message.text.split("\n\n")[1]
@@ -1628,7 +1633,7 @@ def callback_toggle(call: types.CallbackQuery):
 def callback_open_settings(call: types.CallbackQuery):
     """
     Handle callback for open_settings button.
-    Displays the full settings panel with all available options.
+    Displays the full advanced settings panel with all available sections.
     """
     try:
         # Check if user is admin in any group
@@ -1643,27 +1648,45 @@ def callback_open_settings(call: types.CallbackQuery):
             return
         
         # Answer the callback query
-        bot.answer_callback_query(call.id, "تم تحميل الإعدادات")
+        bot.answer_callback_query(call.id, "تم تحميل لوحة التحكم")
         
-        # Build settings display message
+        # Build advanced settings panel
         settings_text = (
-            "⚙️ *إعدادات البوت*\n\n"
-            "يمكنك تعديل إعدادات البوت في أي مجموعة تكون مشرفًا فيها.\n\n"
-            "*الميزات المتاحة:*\n"
-            "🌅 أذكار الصباح\n"
-            "🌙 أذكار المساء\n"
-            "📿 سورة الكهف (الجمعة)\n"
-            "🕌 أدعية الجمعة\n"
-            "😴 رسالة النوم\n"
-            "🗑️ حذف رسائل الخدمة\n\n"
-            "*للتعديل:*\n"
-            "استخدم أمر `/settings` في المجموعة التي تريد تعديل إعداداتها"
+            "⚙️ *لوحة التحكم المتقدمة*\n\n"
+            "*أقسام الإعدادات الرئيسية:*\n\n"
+            "🌅 *أذكار الصباح*\n"
+            "• قابلة للتفعيل/التعطيل\n"
+            "• توقيت قابل للتخصيص\n\n"
+            "🌙 *أذكار المساء*\n"
+            "• قابلة للتفعيل/التعطيل\n"
+            "• توقيت قابل للتخصيص\n\n"
+            "📿 *سورة الكهف وأدعية الجمعة*\n"
+            "• إرسال تلقائي كل جمعة\n"
+            "• دعم الوسائط المتعددة\n\n"
+            "🌙 *إعدادات رمضان*\n"
+            "• ليلة القدر\n"
+            "• العشر الأواخر\n"
+            "• دعاء الإفطار\n\n"
+            "🕋 *إعدادات الحج والعيد*\n"
+            "• يوم عرفة\n"
+            "• أذكار الحج\n"
+            "• تكبيرات العيد\n\n"
+            "✨ *الأدعية المتنوعة*\n"
+            "• فواصل زمنية من دقيقة إلى يوم كامل\n"
+            "• نصوص، صور، صوتيات، ملفات PDF\n\n"
+            "*ملاحظة:* هذه الإعدادات مستقلة لكل مجموعة"
         )
         
-        # Add advanced settings button
+        # Create keyboard with main sections
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("⚙️ الإعدادات المتقدمة", callback_data="advanced_settings")
+            types.InlineKeyboardButton("🌅 أذكار الصباح والمساء", callback_data="morning_evening_settings"),
+            types.InlineKeyboardButton("📿 أدعية الجمعة", callback_data="friday_settings"),
+            types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
+            types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
+            types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
+            types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
+            types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings")
         )
         
         # Edit the message to show settings
@@ -1675,7 +1698,7 @@ def callback_open_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Settings displayed for user {call.from_user.id}")
+        logger.info(f"Advanced settings panel displayed for user {call.from_user.id}")
         
     except Exception as e:
         logger.error(f"Error in callback_open_settings: {e}", exc_info=True)
@@ -1693,46 +1716,55 @@ def callback_open_settings(call: types.CallbackQuery):
 @bot.callback_query_handler(func=lambda call: call.data == "advanced_settings")
 def callback_advanced_settings(call: types.CallbackQuery):
     """
-    Handle callback for advanced settings panel.
-    Displays media and scheduling options for the bot.
+    Handle callback for advanced settings panel - DEPRECATED.
+    Redirects to main settings panel.
     """
     try:
-        # Check if user is admin in any group
+        # Redirect to open_settings
+        call.data = "open_settings"
+        callback_open_settings(call)
+    except Exception as e:
+        logger.error(f"Error in callback_advanced_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "morning_evening_settings")
+def callback_morning_evening_settings(call: types.CallbackQuery):
+    """
+    Handle callback for morning and evening azkar settings.
+    Shows options to enable/disable and configure timing.
+    """
+    try:
         is_admin = is_user_admin_in_any_group(call.from_user.id)
         
         if not is_admin:
-            bot.answer_callback_query(
-                call.id,
-                "⚠️ يجب أن تكون مشرفًا في إحدى المجموعات",
-                show_alert=True
-            )
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
             return
         
-        bot.answer_callback_query(call.id, "الإعدادات المتقدمة")
+        bot.answer_callback_query(call.id, "أذكار الصباح والمساء")
         
-        # Build advanced settings message
         settings_text = (
-            "⚙️ *الإعدادات المتقدمة*\n\n"
-            "*إعدادات الوسائط:*\n"
-            "تفعيل/تعطيل إرسال الوسائط مع الأذكار\n\n"
-            "*الأدعية المتنوعة:*\n"
-            "إرسال أدعية وآيات وأحاديث بشكل دوري\n\n"
-            "*إعدادات رمضان والحج:*\n"
-            "تخصيص الأذكار الخاصة بالمناسبات\n\n"
-            "*إعدادات المواعيد:*\n"
-            "تخصيص أوقات إرسال الأذكار\n\n"
-            "*ملاحظة:* هذه الإعدادات تطبق على جميع المجموعات\n"
-            "للتعديل الفردي لكل مجموعة، استخدم `/settings` في المجموعة"
+            "🌅🌙 *إعدادات أذكار الصباح والمساء*\n\n"
+            "*أذكار الصباح:*\n"
+            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+            "• الوقت الافتراضي: 05:00\n"
+            "• قابلة للتخصيص لكل مجموعة\n\n"
+            "*أذكار المساء:*\n"
+            "• يتم إرسالها تلقائياً في الوقت المحدد\n"
+            "• الوقت الافتراضي: 18:00\n"
+            "• قابلة للتخصيص لكل مجموعة\n\n"
+            "*الميزات:*\n"
+            "• ✅/❌ تفعيل أو تعطيل لكل مجموعة\n"
+            "• دعم الوسائط (صور، فيديو، ملفات)\n"
+            "• تخصيص الأوقات باستخدام `/start` في المجموعة\n\n"
+            "*للتعديل في مجموعة معينة:*\n"
+            "استخدم `/start` في المجموعة وفعّل الميزات المطلوبة"
         )
         
-        # Create keyboard with options
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
-            types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
-            types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
-            types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
-            types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         
@@ -1744,10 +1776,65 @@ def callback_advanced_settings(call: types.CallbackQuery):
             reply_markup=markup
         )
         
-        logger.info(f"Advanced settings displayed for user {call.from_user.id}")
+        logger.info(f"Morning/Evening settings displayed for user {call.from_user.id}")
         
     except Exception as e:
-        logger.error(f"Error in callback_advanced_settings: {e}", exc_info=True)
+        logger.error(f"Error in callback_morning_evening_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "friday_settings")
+def callback_friday_settings(call: types.CallbackQuery):
+    """
+    Handle callback for Friday prayers settings.
+    Shows options for Surat Al-Kahf and Friday duas.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "أدعية الجمعة")
+        
+        settings_text = (
+            "📿🕌 *إعدادات أدعية الجمعة*\n\n"
+            "*سورة الكهف:*\n"
+            "• تُرسل تلقائياً كل يوم جمعة\n"
+            "• الوقت: الجمعة 09:00\n"
+            "• يمكن إرسالها مع صور أو فيديو إسلامي\n\n"
+            "*أدعية الجمعة:*\n"
+            "• أدعية وأذكار خاصة بيوم الجمعة\n"
+            "• الوقت: الجمعة 10:00\n"
+            "• تشمل أدعية مستجابة في ساعة الإجابة\n\n"
+            "*الميزات:*\n"
+            "• ✅/❌ تفعيل أو تعطيل كل ميزة على حدة\n"
+            "• دعم إرسال الوسائط المتعددة\n"
+            "• إعدادات مستقلة لكل مجموعة\n\n"
+            "*للتعديل في مجموعة معينة:*\n"
+            "استخدم `/start` في المجموعة واختر الميزات المطلوبة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Friday settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_friday_settings: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -1781,7 +1868,7 @@ def callback_media_settings(call: types.CallbackQuery):
             "*ملاحظة:* يتم اختيار الوسائط عشوائياً من قاعدة البيانات\n\n"
             "للتفعيل في مجموعة معينة:\n"
             "1. اذهب للمجموعة\n"
-            "2. استخدم `/settings`\n"
+            "2. استخدم `/start`\n"
             "3. فعّل الميزات المطلوبة"
         )
         
@@ -1791,7 +1878,7 @@ def callback_media_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("🎥 نوع الوسائط: فيديو", callback_data="media_type_videos"),
             types.InlineKeyboardButton("📄 نوع الوسائط: ملفات", callback_data="media_type_documents"),
             types.InlineKeyboardButton("🎲 نوع الوسائط: عشوائي", callback_data="media_type_all"),
-            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         
         bot.edit_message_text(
@@ -1878,7 +1965,7 @@ def callback_schedule_settings(call: types.CallbackQuery):
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         
         bot.edit_message_text(
@@ -1928,7 +2015,7 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
             "• 12 ساعة\n"
             "• 24 ساعة (يوم كامل)\n\n"
             "*للتفعيل في مجموعة:*\n"
-            "استخدم `/settings` في المجموعة واختر الفاصل الزمني المناسب"
+            "استخدم `/start` في المجموعة واختر الفاصل الزمني المناسب"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=2)
@@ -1943,7 +2030,7 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("12 ساعة", callback_data="diverse_interval_720"),
             types.InlineKeyboardButton("24 ساعة", callback_data="diverse_interval_1440")
         )
-        markup.add(types.InlineKeyboardButton("« العودة", callback_data="advanced_settings"))
+        markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
         
         bot.edit_message_text(
             settings_text,
@@ -2023,12 +2110,12 @@ def callback_ramadan_settings(call: types.CallbackQuery):
             "*3. دعاء الإفطار:*\n"
             "يتم إرسال دعاء الإفطار قبل أذان المغرب\n\n"
             "*للتفعيل:*\n"
-            "استخدم `/settings` في المجموعة وفعّل الميزات المطلوبة"
+            "استخدم `/start` في المجموعة وفعّل الميزات المطلوبة"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         
         bot.edit_message_text(
@@ -2080,12 +2167,12 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
             "*3. عيد الأضحى:*\n"
             "تكبيرات وأدعية خاصة بعيد الأضحى (10 ذو الحجة)\n\n"
             "*للتفعيل:*\n"
-            "استخدم `/settings` في المجموعة"
+            "استخدم `/start` في المجموعة"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("« العودة", callback_data="advanced_settings")
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         
         bot.edit_message_text(
@@ -2247,7 +2334,7 @@ def callback_group_ramadan_settings(call: types.CallbackQuery):
         ]
         
         for key, label in ramadan_btns:
-            status = "✓" if ramadan_settings[key] else "✗"
+            status = "✅" if ramadan_settings[key] else "❌"
             markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_ramadan_{key}"))
         
         bot.edit_message_text(
@@ -2327,7 +2414,7 @@ def callback_group_hajj_eid_settings(call: types.CallbackQuery):
         ]
         
         for key, label in hajj_eid_btns:
-            status = "✓" if hajj_eid_settings[key] else "✗"
+            status = "✅" if hajj_eid_settings[key] else "❌"
             markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_hajj_eid_{key}"))
         
         bot.edit_message_text(
@@ -2391,12 +2478,12 @@ def cmd_status(message: types.Message):
         "📊 *حالة البوت*\n\n"
         f"البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
         "*الميزات المفعلة:*\n"
-        f"🌅 أذكار الصباح: {'✓' if settings['morning_azkar'] else '✗'}\n"
-        f"🌙 أذكار المساء: {'✓' if settings['evening_azkar'] else '✗'}\n"
-        f"📿 سورة الكهف: {'✓' if settings['friday_sura'] else '✗'}\n"
-        f"🕌 أدعية الجمعة: {'✓' if settings['friday_dua'] else '✗'}\n"
-        f"😴 رسالة النوم: {'✓' if settings['sleep_message'] else '✗'}\n"
-        f"🗑️ حذف رسائل الخدمة: {'✓' if settings['delete_service_messages'] else '✗'}\n\n"
+        f"🌅 أذكار الصباح: {'✅' if settings['morning_azkar'] else '❌'}\n"
+        f"🌙 أذكار المساء: {'✅' if settings['evening_azkar'] else '❌'}\n"
+        f"📿 سورة الكهف: {'✅' if settings['friday_sura'] else '❌'}\n"
+        f"🕌 أدعية الجمعة: {'✅' if settings['friday_dua'] else '❌'}\n"
+        f"😴 رسالة النوم: {'✅' if settings['sleep_message'] else '❌'}\n"
+        f"🗑️ حذف رسائل الخدمة: {'✅' if settings['delete_service_messages'] else '❌'}\n\n"
         "*الأوقات:*\n"
         f"🌅 الصباح: {settings['morning_time']}\n"
         f"🌙 المساء: {settings['evening_time']}\n"
