@@ -2030,6 +2030,38 @@ def add_support_buttons(markup: types.InlineKeyboardMarkup):
     )
     return markup
 
+def extract_chat_id_from_callback(callback_data: str, min_underscore_count: int = 3) -> tuple:
+    """
+    Extract chat_id from callback data if present.
+    
+    Args:
+        callback_data: The callback data string (e.g., "morning_time_presets_{chat_id}")
+        min_underscore_count: Minimum number of underscores expected for chat_id format
+    
+    Returns:
+        tuple: (chat_id, has_chat_id) where chat_id is int or None, has_chat_id is bool
+    """
+    if "_" in callback_data and callback_data.count("_") >= min_underscore_count:
+        parts = callback_data.split("_")
+        try:
+            chat_id = int(parts[-1])
+            return (chat_id, True)
+        except (ValueError, IndexError):
+            return (None, False)
+    return (None, False)
+
+def is_simple_toggle_callback(call_data: str) -> bool:
+    """
+    Check if callback data is a simple toggle command (without chat_id suffix).
+    
+    Args:
+        call_data: The callback data string
+    
+    Returns:
+        bool: True if it's a simple toggle (no chat_id), False otherwise
+    """
+    return call_data.startswith("toggle_") and not any(char.isdigit() for char in call_data.split("_")[-1])
+
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     """
@@ -2294,7 +2326,7 @@ def cmd_settings(message: types.Message):
         logger.error(f"Error in cmd_settings: {e}", exc_info=True)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_") and not any(char.isdigit() for char in call.data.split("_")[-1]))
+@bot.callback_query_handler(func=lambda call: is_simple_toggle_callback(call.data))
 def callback_toggle(call: types.CallbackQuery):
     """
     Handle toggle callbacks for settings when used directly in group chats.
@@ -2679,22 +2711,16 @@ def callback_morning_time_presets(call: types.CallbackQuery):
     """Show preset times for morning azkar as information."""
     try:
         # Extract chat_id from callback data if present
-        chat_id = None
-        if "_" in call.data and call.data.count("_") >= 3:
-            # New format: morning_time_presets_{chat_id}
-            parts = call.data.split("_")
-            try:
-                chat_id = int(parts[-1])
-                # Verify user is admin of this chat
-                if not is_user_admin_of_chat(call.from_user.id, chat_id):
-                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
-                    return
-            except (ValueError, IndexError):
-                # Fallback to old behavior
-                chat_id = None
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
         
         # If no chat_id, verify user is admin in any group
-        if chat_id is None:
+        if not has_chat_id:
             is_admin = is_user_admin_in_any_group(call.from_user.id)
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
@@ -2748,22 +2774,16 @@ def callback_evening_time_presets(call: types.CallbackQuery):
     """Show preset times for evening azkar as information."""
     try:
         # Extract chat_id from callback data if present
-        chat_id = None
-        if "_" in call.data and call.data.count("_") >= 3:
-            # New format: evening_time_presets_{chat_id}
-            parts = call.data.split("_")
-            try:
-                chat_id = int(parts[-1])
-                # Verify user is admin of this chat
-                if not is_user_admin_of_chat(call.from_user.id, chat_id):
-                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
-                    return
-            except (ValueError, IndexError):
-                # Fallback to old behavior
-                chat_id = None
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
         
         # If no chat_id, verify user is admin in any group
-        if chat_id is None:
+        if not has_chat_id:
             is_admin = is_user_admin_in_any_group(call.from_user.id)
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
@@ -3369,22 +3389,16 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
     """
     try:
         # Extract chat_id from callback data if present
-        chat_id = None
-        if "_" in call.data and call.data.count("_") >= 3:
-            # New format: diverse_azkar_settings_{chat_id}
-            parts = call.data.split("_")
-            try:
-                chat_id = int(parts[-1])
-                # Verify user is admin of this chat
-                if not is_user_admin_of_chat(call.from_user.id, chat_id):
-                    bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
-                    return
-            except (ValueError, IndexError):
-                # Fallback to old behavior
-                chat_id = None
+        chat_id, has_chat_id = extract_chat_id_from_callback(call.data)
+        
+        if has_chat_id and chat_id:
+            # Verify user is admin of this chat
+            if not is_user_admin_of_chat(call.from_user.id, chat_id):
+                bot.answer_callback_query(call.id, "⚠️ لست مشرفًا في هذه المجموعة", show_alert=True)
+                return
         
         # If no chat_id, verify user is admin in any group
-        if chat_id is None:
+        if not has_chat_id:
             is_admin = is_user_admin_in_any_group(call.from_user.id)
             if not is_admin:
                 bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
