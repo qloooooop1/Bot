@@ -21,8 +21,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# توكن البوت
-BOT_TOKEN = '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk'
+# توكن البوت - احصل عليه من @BotFather
+# Bot Token - Get it from @BotFather
+# ⚠️ IMPORTANT: Replace with your own bot token!
+BOT_TOKEN = '7812533121:AAFyxg2EeeB4WqFpHecR1gdGUdg9Or7Evlk'  # استبدل هذا بتوكن البوت الخاص بك
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # المنطقة الزمنية (توقيت الرياض)
