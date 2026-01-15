@@ -1305,10 +1305,18 @@ def send_fasting_reminder(chat_id: int, reminder_type: str):
         # Prepare reminder message
         if reminder_type == "monday_thursday":
             # Determine which day - reminder is sent day before fasting
-            # Sunday (6) -> tomorrow is Monday (0)
-            # Wednesday (2) -> tomorrow is Thursday (3)
+            # Scheduled on: Sunday (6) evening -> Fasting: Monday (0)
+            # Scheduled on: Wednesday (2) evening -> Fasting: Thursday (3)
             today = datetime.now(TIMEZONE)
-            day_name = "الإثنين" if today.weekday() == 6 else "الخميس"
+            # If today is Sunday (6), tomorrow is Monday
+            # If today is Wednesday (2), tomorrow is Thursday
+            if today.weekday() == 6:
+                day_name = "الإثنين"
+            elif today.weekday() == 2:
+                day_name = "الخميس"
+            else:
+                # Fallback - shouldn't happen with correct scheduling
+                day_name = "الإثنين أو الخميس"
             
             message = (
                 f"🌙 *تذكير بصيام {day_name}*\n\n"
