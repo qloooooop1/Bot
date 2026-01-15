@@ -136,7 +136,18 @@ def update_chat_setting(chat_id: int, key: str, value):
 # ────────────────────────────────────────────────
 
 def load_azkar_from_json(filename):
-    """Load azkar from JSON file and format them for display"""
+    """
+    Load azkar from JSON file and format them for display.
+    
+    Args:
+        filename (str): Name of the JSON file in the azkar directory
+        
+    Returns:
+        list: List of formatted message strings, empty list on error
+        
+    The function reads a JSON file containing azkar data and formats each item
+    into a message string with icon, title, text, reference, and count if available.
+    """
     try:
         filepath = os.path.join(os.path.dirname(__file__), 'azkar', filename)
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -165,7 +176,18 @@ def load_azkar_from_json(filename):
         return []
 
 def load_friday_azkar():
-    """Load Friday azkar with special structure"""
+    """
+    Load Friday azkar with special structure including Kahf reminder and duas.
+    
+    Returns:
+        tuple: (kahf_reminder_msg, duas_list) where:
+            - kahf_reminder_msg (str): Formatted Kahf reminder message
+            - duas_list (list): List of formatted Friday dua messages
+            Returns ("", []) on error
+            
+    This function handles the special structure of Friday azkar which includes
+    a Surah Al-Kahf reminder and Friday-specific duas with related hadiths.
+    """
     try:
         filepath = os.path.join(os.path.dirname(__file__), 'azkar', 'friday.json')
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -182,6 +204,9 @@ def load_friday_azkar():
         
         # Friday duas
         duas = []
+        hadith_idx = 0
+        hadiths = data.get('hadiths', [])
+        
         for dua in data['duas']:
             msg = f"🕌 *دعاء يوم الجمعة*\n\n{dua['text']}"
             if dua.get('reference'):
@@ -190,9 +215,10 @@ def load_friday_azkar():
                 msg += f"\n\n{dua['count']}"
             
             # Add related hadith if available
-            if data.get('hadiths') and len(duas) < len(data['hadiths']):
-                hadith = data['hadiths'][len(duas)]
+            if hadith_idx < len(hadiths):
+                hadith = hadiths[hadith_idx]
                 msg += f"\n\n✨ {hadith['text']}"
+                hadith_idx += 1
             
             duas.append(msg)
         
@@ -202,7 +228,16 @@ def load_friday_azkar():
         return "", []
 
 def load_sleep_azkar():
-    """Load sleep azkar with special structure"""
+    """
+    Load sleep azkar with special structure.
+    
+    Returns:
+        str: Formatted sleep azkar message combining all sleep azkar and closing message.
+             Returns empty string on error.
+             
+    This function handles the special structure of sleep azkar which combines
+    multiple surahs (Al-Ikhlas, Al-Falaq, Al-Nas) into a single message.
+    """
     try:
         filepath = os.path.join(os.path.dirname(__file__), 'azkar', 'sleep.json')
         with open(filepath, 'r', encoding='utf-8') as f:
