@@ -41,22 +41,25 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is required")
 
 # PORT configuration with proper validation
+PORT_ENV = os.environ.get("PORT")
 try:
-    PORT = int(os.environ.get("PORT", 5000))
+    PORT = int(PORT_ENV) if PORT_ENV else 5000
     if not (1 <= PORT <= 65535):
-        logger.warning(f"Invalid PORT value {PORT}, using default 5000")
+        logger.warning(f"⚠️ Invalid PORT value {PORT}, using default 5000")
         PORT = 5000
-    logger.info(f"PORT configured: {PORT}")
+    logger.info(f"✓ PORT configured: {PORT} (from {'environment' if PORT_ENV else 'default'})")
 except ValueError as e:
-    logger.error(f"Error parsing PORT: {e}, using default 5000")
+    logger.error(f"❌ Error parsing PORT from environment variable '{PORT_ENV}': {e}, using default 5000")
     PORT = 5000
 
 TIMEZONE = pytz.timezone("Asia/Riyadh")
 
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'bot-8c0e.onrender.com')}{WEBHOOK_PATH}"
+RENDER_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'bot-8c0e.onrender.com')
+WEBHOOK_URL = f"https://{RENDER_HOSTNAME}{WEBHOOK_PATH}"
 WEBHOOK_ERROR_THRESHOLD_SECONDS = 3600  # Only reconfigure webhook if error occurred within last hour
-logger.info(f"WEBHOOK_URL configured: {WEBHOOK_URL}")
+logger.info(f"✓ WEBHOOK_URL configured: {WEBHOOK_URL}")
+logger.info(f"✓ Render hostname: {RENDER_HOSTNAME}")
 
 # ────────────────────────────────────────────────
 #               Instances
@@ -823,11 +826,13 @@ def home():
     try:
         info = bot.get_webhook_info()
         webhook_status = "✓ Configured" if info.url else "✗ Not configured"
-        response = f"نور الذكر – البوت يعمل ✓\nWebhook: {webhook_status}"
+        port_info = f"PORT: {PORT}"
+        response = f"نور الذكر – البوت يعمل ✓\nWebhook: {webhook_status}\n{port_info}"
+        logger.debug(f"Home endpoint accessed - Webhook: {webhook_status}, PORT: {PORT}")
         return response, 200
     except Exception as e:
-        logger.error(f"Error in home endpoint: {e}")
-        return "نور الذكر – البوت يعمل ✓", 200
+        logger.error(f"❌ Error in home endpoint: {e}")
+        return f"نور الذكر – البوت يعمل ✓\nPORT: {PORT}", 200
 
 @app.route("/health")
 def health():
@@ -843,32 +848,45 @@ def health():
         webhook_configured = bool(info.url)
         has_errors = bool(info.last_error_message)
         
+        # Calculate error age if there is an error
+        error_age_seconds = None
+        if info.last_error_date:
+            error_age_seconds = int(time.time() - info.last_error_date)
+        
         status = {
             "status": "healthy" if webhook_configured and not has_errors else "degraded",
             "bot": "operational",
+            "port": PORT,
+            "port_source": "environment" if os.environ.get("PORT") else "default",
             "webhook_url": info.url or "Not configured",
             "webhook_configured": webhook_configured,
+            "webhook_expected": WEBHOOK_URL,
+            "webhook_match": info.url == WEBHOOK_URL if info.url else False,
             "pending_updates": info.pending_update_count,
             "last_error_date": info.last_error_date if info.last_error_date else None,
+            "last_error_age_seconds": error_age_seconds,
             "last_error": info.last_error_message or "None",
             "max_connections": info.max_connections if hasattr(info, 'max_connections') else None,
-            "expected_webhook": WEBHOOK_URL
+            "render_hostname": RENDER_HOSTNAME,
+            "timezone": str(TIMEZONE),
+            "scheduler_running": scheduler.running
         }
         
         # Log if webhook URL doesn't match expected
         if webhook_configured and info.url != WEBHOOK_URL:
-            logger.warning(f"Webhook URL mismatch! Expected: {WEBHOOK_URL}, Actual: {info.url}")
+            logger.warning(f"⚠️ Webhook URL mismatch! Expected: {WEBHOOK_URL}, Actual: {info.url}")
             status["status"] = "misconfigured"
             status["warning"] = f"Webhook URL mismatch. Expected: {WEBHOOK_URL}"
         
         return status, 200
     except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True)
+        logger.error(f"❌ Health check failed: {e}", exc_info=True)
         return {
             "status": "unhealthy", 
             "bot": "error",
             "error": str(e),
-            "error_type": type(e).__name__
+            "error_type": type(e).__name__,
+            "port": PORT
         }, 500
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
@@ -882,21 +900,21 @@ def telegram_webhook():
             json_string = request.get_data().decode("utf-8")
             update = types.Update.de_json(json_string)
             if update:
-                logger.debug(f"Processing update: {update.update_id}")
+                logger.debug(f"📨 Processing update: {update.update_id}")
                 bot.process_new_updates([update])
-                logger.debug(f"Update {update.update_id} processed successfully")
+                logger.debug(f"✓ Update {update.update_id} processed successfully")
             else:
-                logger.warning("Received empty update")
+                logger.warning("⚠️ Received empty update")
             return "", 200
         except UnicodeDecodeError as e:
-            logger.error(f"Webhook decode error: {e}")
+            logger.error(f"❌ Webhook decode error: {e}")
             return "", 400
         except Exception as e:
-            logger.error(f"Webhook processing error: {e}", exc_info=True)
+            logger.error(f"❌ Webhook processing error: {e}", exc_info=True)
             # Return 200 to prevent Telegram from retrying indefinitely
             return "", 200
     else:
-        logger.warning(f"Invalid content-type: {request.headers.get('content-type')}")
+        logger.warning(f"⚠️ Invalid content-type: {request.headers.get('content-type')}")
         abort(403)
 
 @app.route("/setwebhook", methods=["GET"])
@@ -906,9 +924,9 @@ def manual_set_webhook():
     Useful for debugging and manual reconfiguration.
     """
     try:
-        logger.info("Manual webhook setup requested")
+        logger.info("🔧 Manual webhook setup requested")
         bot.remove_webhook()
-        logger.info("Previous webhook removed")
+        logger.info("✓ Previous webhook removed")
         
         success = bot.set_webhook(
             url=WEBHOOK_URL,
@@ -919,14 +937,19 @@ def manual_set_webhook():
         
         if success:
             info = bot.get_webhook_info()
-            logger.info(f"Webhook set successfully: {info.url}")
-            return f"✓ Webhook تم بنجاح → {WEBHOOK_URL}<br>Status: {info.url}", 200
+            logger.info(f"✓ Webhook set successfully: {info.url}")
+            return (
+                f"✓ Webhook تم بنجاح → {WEBHOOK_URL}<br>"
+                f"Status: {info.url}<br>"
+                f"PORT: {PORT}<br>"
+                f"Render Hostname: {RENDER_HOSTNAME}"
+            ), 200
         else:
-            logger.error("Webhook setup failed")
-            return f"✗ Webhook فشل → {WEBHOOK_URL}", 500
+            logger.error("❌ Webhook setup failed")
+            return f"✗ Webhook فشل → {WEBHOOK_URL}<br>PORT: {PORT}", 500
     except Exception as e:
-        logger.error(f"Manual webhook setup error: {e}", exc_info=True)
-        return f"خطأ: {str(e)}", 500
+        logger.error(f"❌ Manual webhook setup error: {e}", exc_info=True)
+        return f"خطأ: {str(e)}<br>PORT: {PORT}", 500
 
 @app.route("/check-webhook", methods=["GET"])
 def check_webhook_status():
@@ -1074,29 +1097,58 @@ def verify_webhook():
     Automatically reconfigures if webhook is missing or incorrect.
     """
     try:
+        logger.debug("🔍 Starting webhook verification...")
         info = bot.get_webhook_info()
         
         if not info.url:
-            logger.warning("Webhook not configured, attempting to set up...")
+            logger.warning("⚠️ Webhook not configured, attempting to set up...")
             setup_webhook()
         elif info.url != WEBHOOK_URL:
-            logger.warning(f"Webhook URL mismatch: expected {WEBHOOK_URL}, got {info.url}")
+            logger.warning(f"⚠️ Webhook URL mismatch: expected {WEBHOOK_URL}, got {info.url}")
             setup_webhook()
         elif info.last_error_message:
-            logger.warning(f"Webhook has errors: {info.last_error_message}")
+            logger.warning(f"⚠️ Webhook has errors: {info.last_error_message}")
             # Only reconfigure if error is recent (within threshold)
             if info.last_error_date and (time.time() - info.last_error_date < WEBHOOK_ERROR_THRESHOLD_SECONDS):
-                logger.info("Recent webhook error detected, reconfiguring...")
+                logger.info("⚠️ Recent webhook error detected, reconfiguring...")
                 setup_webhook()
+            else:
+                logger.debug(f"ℹ️ Webhook error is old (>{WEBHOOK_ERROR_THRESHOLD_SECONDS}s), not reconfiguring")
         else:
-            logger.debug(f"Webhook verification successful: {info.url}")
+            logger.debug(f"✓ Webhook verification successful: {info.url}")
     except Exception as e:
-        logger.error(f"Webhook verification failed: {e}", exc_info=True)
+        logger.error(f"❌ Webhook verification failed: {e}", exc_info=True)
+
+def log_startup_summary():
+    """
+    Log comprehensive startup summary with all critical configuration.
+    This helps diagnose deployment issues on platforms like Render.
+    """
+    logger.info("=" * 80)
+    logger.info("🚀 BOT STARTUP SUMMARY")
+    logger.info("=" * 80)
+    logger.info(f"📍 Environment: {'Production (Render)' if RENDER_HOSTNAME != 'bot-8c0e.onrender.com' else 'Default'}")
+    logger.info(f"🔌 PORT: {PORT} (Source: {'Environment Variable' if os.environ.get('PORT') else 'Default'})")
+    logger.info(f"🌐 Webhook URL: {WEBHOOK_URL}")
+    logger.info(f"🏠 Render Hostname: {RENDER_HOSTNAME}")
+    logger.info(f"🕒 Timezone: {TIMEZONE}")
+    logger.info(f"🤖 Bot Token: {'✓ Configured' if BOT_TOKEN else '❌ Missing'}")
+    logger.info(f"📊 Scheduler: {'✓ Running' if scheduler.running else '❌ Not Running'}")
+    logger.info("=" * 80)
 
 # Run once on import (critical for Render + gunicorn)
 # This ensures webhook is set up when gunicorn loads the module
 try:
-    setup_webhook()
+    # Log startup configuration
+    log_startup_summary()
+    
+    # Setup webhook with retry logic
+    webhook_setup_success = setup_webhook()
+    
+    if webhook_setup_success:
+        logger.info("✅ Initial webhook setup completed successfully")
+    else:
+        logger.warning("⚠️ Initial webhook setup failed, will retry via periodic verification")
     
     # Schedule periodic webhook verification (every 30 minutes)
     # This ensures webhook stays configured even if it gets removed
@@ -1107,9 +1159,9 @@ try:
         id='webhook_verification',
         replace_existing=True
     )
-    logger.info("Webhook verification job scheduled (every 30 minutes)")
+    logger.info("✓ Webhook verification job scheduled (every 30 minutes)")
 except Exception as e:
-    logger.critical(f"Critical error during initial webhook setup: {e}", exc_info=True)
+    logger.critical(f"❌ Critical error during initial webhook setup: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Local Development Only
