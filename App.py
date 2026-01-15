@@ -170,11 +170,135 @@ def init_db():
         )
     ''')
     
+    # Fasting reminders settings table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS fasting_reminders (
+            chat_id INTEGER PRIMARY KEY,
+            monday_thursday_enabled INTEGER DEFAULT 1,
+            arafah_reminder_enabled INTEGER DEFAULT 1,
+            reminder_time TEXT DEFAULT '21:00',
+            FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("Database initialized with all tables")
 
 init_db()
+
+def init_postgres_db():
+    """Initialize PostgreSQL database tables if DATABASE_URL is configured."""
+    if not (DATABASE_URL and POSTGRES_AVAILABLE):
+        return
+    
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as c:
+                # Main chat settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS chat_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        is_enabled INTEGER DEFAULT 1,
+                        morning_azkar INTEGER DEFAULT 1,
+                        evening_azkar INTEGER DEFAULT 1,
+                        friday_sura INTEGER DEFAULT 1,
+                        friday_dua INTEGER DEFAULT 1,
+                        sleep_message INTEGER DEFAULT 1,
+                        delete_service_messages INTEGER DEFAULT 1,
+                        morning_time TEXT DEFAULT '05:00',
+                        evening_time TEXT DEFAULT '18:00',
+                        sleep_time TEXT DEFAULT '22:00',
+                        media_enabled INTEGER DEFAULT 0,
+                        media_type TEXT DEFAULT 'images',
+                        send_media_with_morning INTEGER DEFAULT 0,
+                        send_media_with_evening INTEGER DEFAULT 0,
+                        send_media_with_friday INTEGER DEFAULT 0
+                    )
+                ''')
+                
+                # Diverse azkar settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS diverse_azkar_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        enabled INTEGER DEFAULT 0,
+                        interval_minutes INTEGER DEFAULT 60,
+                        media_type TEXT DEFAULT 'text',
+                        last_sent_timestamp BIGINT DEFAULT 0,
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Ramadan settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS ramadan_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        ramadan_enabled INTEGER DEFAULT 1,
+                        laylat_alqadr_enabled INTEGER DEFAULT 1,
+                        last_ten_days_enabled INTEGER DEFAULT 1,
+                        iftar_dua_enabled INTEGER DEFAULT 1,
+                        media_type TEXT DEFAULT 'images',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Hajj and Eid settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS hajj_eid_settings (
+                        chat_id BIGINT PRIMARY KEY,
+                        arafah_day_enabled INTEGER DEFAULT 1,
+                        eid_eve_enabled INTEGER DEFAULT 1,
+                        eid_day_enabled INTEGER DEFAULT 1,
+                        eid_adha_enabled INTEGER DEFAULT 1,
+                        hajj_enabled INTEGER DEFAULT 1,
+                        media_type TEXT DEFAULT 'images',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Fasting reminders settings table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS fasting_reminders (
+                        chat_id BIGINT PRIMARY KEY,
+                        monday_thursday_enabled INTEGER DEFAULT 1,
+                        arafah_reminder_enabled INTEGER DEFAULT 1,
+                        reminder_time TEXT DEFAULT '21:00',
+                        FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                conn.commit()
+                logger.info("✓ PostgreSQL database initialized with all tables")
+    except Exception as e:
+        logger.error(f"Failed to initialize PostgreSQL database: {e}", exc_info=True)
+        logger.info("Continuing with SQLite fallback")
+
+# Initialize PostgreSQL if available
+init_postgres_db()
+
+# ────────────────────────────────────────────────
+#               Database Helper Functions
+# ────────────────────────────────────────────────
+
+def get_db_connection():
+    """
+    Get database connection - PostgreSQL if available, otherwise SQLite.
+    
+    Returns:
+        tuple: (connection, cursor, is_postgres)
+    """
+    if DATABASE_URL and POSTGRES_AVAILABLE:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            return conn, cursor, True
+        except Exception as e:
+            logger.warning(f"PostgreSQL connection failed, using SQLite: {e}")
+    
+    # Fallback to SQLite
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    return conn, cursor, False
 
 # ────────────────────────────────────────────────
 #               Helper Functions
@@ -240,41 +364,49 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
         return False
 
 def get_chat_settings(chat_id: int) -> dict:
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM chat_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
-    conn.close()
-
-    if row is None:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO chat_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    """Get chat settings from database (PostgreSQL preferred, SQLite fallback)."""
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        # Use appropriate placeholder for database type
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM chat_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO chat_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_chat_settings(chat_id)
+        
         conn.close()
-        return get_chat_settings(chat_id)
-
-    # Handle both old and new schema for backward compatibility
-    return {
-        "chat_id": row[0],
-        "is_enabled": bool(row[1]),
-        "morning_azkar": bool(row[2]),
-        "evening_azkar": bool(row[3]),
-        "friday_sura": bool(row[4]),
-        "friday_dua": bool(row[5]),
-        "sleep_message": bool(row[6]),
-        "delete_service_messages": bool(row[7]),
-        "morning_time": row[8],
-        "evening_time": row[9],
-        "sleep_time": row[10],
-        "media_enabled": bool(row[11]) if len(row) > 11 else False,
-        "media_type": row[12] if len(row) > 12 else "images",
-        "send_media_with_morning": bool(row[13]) if len(row) > 13 else False,
-        "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
-        "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
-    }
+        
+        # Handle both old and new schema for backward compatibility
+        return {
+            "chat_id": row[0],
+            "is_enabled": bool(row[1]),
+            "morning_azkar": bool(row[2]),
+            "evening_azkar": bool(row[3]),
+            "friday_sura": bool(row[4]),
+            "friday_dua": bool(row[5]),
+            "sleep_message": bool(row[6]),
+            "delete_service_messages": bool(row[7]),
+            "morning_time": row[8],
+            "evening_time": row[9],
+            "sleep_time": row[10],
+            "media_enabled": bool(row[11]) if len(row) > 11 else False,
+            "media_type": row[12] if len(row) > 12 else "images",
+            "send_media_with_morning": bool(row[13]) if len(row) > 13 else False,
+            "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
+            "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
+        }
+    except Exception as e:
+        logger.error(f"Error getting chat settings: {e}", exc_info=True)
+        conn.close()
+        raise
 
 def update_chat_setting(chat_id: int, key: str, value):
+    """Update chat setting in database (PostgreSQL preferred, SQLite fallback)."""
     allowed_keys = {
         "is_enabled", "morning_azkar", "evening_azkar",
         "friday_sura", "friday_dua", "sleep_message",
@@ -287,21 +419,27 @@ def update_chat_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid setting key: {key}")
         return
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Convert value to appropriate type based on key
-    if key in ["morning_time", "evening_time", "sleep_time", "media_type"]:
-        # String values - no conversion needed
-        final_value = value
-    else:
-        # Boolean/integer values - convert to int
-        final_value = int(value)
-    
-    c.execute(f"UPDATE chat_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated {key} = {value} for chat {chat_id}")
+    try:
+        # Convert value to appropriate type based on key
+        if key in ["morning_time", "evening_time", "sleep_time", "media_type"]:
+            # String values - no conversion needed
+            final_value = value
+        else:
+            # Boolean/integer values - convert to int
+            final_value = int(value)
+        
+        # Use appropriate placeholder for database type
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"UPDATE chat_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Updated {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating chat setting: {e}", exc_info=True)
+        conn.close()
+        raise
 
 # ────────────────────────────────────────────────
 #               Diverse Azkar Settings Functions
@@ -309,25 +447,31 @@ def update_chat_setting(chat_id: int, key: str, value):
 
 def get_diverse_azkar_settings(chat_id: int) -> dict:
     """Get diverse azkar settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_diverse_azkar_settings(chat_id)
+        
         conn.close()
-        return get_diverse_azkar_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "enabled": bool(row[1]),
-        "interval_minutes": row[2],
-        "media_type": row[3],
-        "last_sent_timestamp": row[4]
-    }
+        return {
+            "chat_id": row[0],
+            "enabled": bool(row[1]),
+            "interval_minutes": row[2],
+            "media_type": row[3],
+            "last_sent_timestamp": row[4]
+        }
+    except Exception as e:
+        logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
+        conn.close()
+        raise
 
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
@@ -337,25 +481,31 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid diverse azkar setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM diverse_azkar_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO diverse_azkar_settings (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE diverse_azkar_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE diverse_azkar_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating diverse azkar setting: {e}", exc_info=True)
+        conn.close()
+        raise
 
 # ────────────────────────────────────────────────
 #               Ramadan Settings Functions
@@ -363,26 +513,32 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
 
 def get_ramadan_settings(chat_id: int) -> dict:
     """Get Ramadan settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_ramadan_settings(chat_id)
+        
         conn.close()
-        return get_ramadan_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "ramadan_enabled": bool(row[1]),
-        "laylat_alqadr_enabled": bool(row[2]),
-        "last_ten_days_enabled": bool(row[3]),
-        "iftar_dua_enabled": bool(row[4]),
-        "media_type": row[5]
-    }
+        return {
+            "chat_id": row[0],
+            "ramadan_enabled": bool(row[1]),
+            "laylat_alqadr_enabled": bool(row[2]),
+            "last_ten_days_enabled": bool(row[3]),
+            "iftar_dua_enabled": bool(row[4]),
+            "media_type": row[5]
+        }
+    except Exception as e:
+        logger.error(f"Error getting ramadan settings: {e}", exc_info=True)
+        conn.close()
+        raise
 
 def update_ramadan_setting(chat_id: int, key: str, value):
     """Update a specific Ramadan setting."""
@@ -395,25 +551,31 @@ def update_ramadan_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid ramadan setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
-    
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
-    
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE ramadan_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE ramadan_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating ramadan setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Hajj & Eid Settings Functions
@@ -421,27 +583,34 @@ def update_ramadan_setting(chat_id: int, key: str, value):
 
 def get_hajj_eid_settings(chat_id: int) -> dict:
     """Get Hajj and Eid settings for a chat, creating default if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT * FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    conn, c, is_postgres = get_db_connection()
     
-    if row is None:
-        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_hajj_eid_settings(chat_id)
+        
+        result = {
+            "chat_id": row[0],
+            "arafah_day_enabled": bool(row[1]),
+            "eid_eve_enabled": bool(row[2]),
+            "eid_day_enabled": bool(row[3]),
+            "eid_adha_enabled": bool(row[4]),
+            "hajj_enabled": bool(row[5]),
+            "media_type": row[6]
+        }
+        return result
+    except Exception as e:
+        logger.error(f"Error getting hajj_eid settings: {e}", exc_info=True)
+        raise
+    finally:
         conn.close()
-        return get_hajj_eid_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "arafah_day_enabled": bool(row[1]),
-        "eid_eve_enabled": bool(row[2]),
-        "eid_day_enabled": bool(row[3]),
-        "eid_adha_enabled": bool(row[4]),
-        "hajj_enabled": bool(row[5]),
-        "media_type": row[6]
-    }
 
 def update_hajj_eid_setting(chat_id: int, key: str, value):
     """Update a specific Hajj/Eid setting."""
@@ -454,25 +623,99 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
         logger.error(f"Invalid hajj_eid setting key: {key}")
         return
     
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn, c, is_postgres = get_db_connection()
     
-    # Ensure settings exist
-    c.execute("SELECT chat_id FROM hajj_eid_settings WHERE chat_id = ?", (chat_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO hajj_eid_settings (chat_id) VALUES (?)", (chat_id,))
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "media_type":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE hajj_eid_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating hajj_eid setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
+
+# ────────────────────────────────────────────────
+#               Fasting Reminders Settings Functions
+# ────────────────────────────────────────────────
+
+def get_fasting_reminders_settings(chat_id: int) -> dict:
+    """Get fasting reminders settings for a chat, creating default if not exists."""
+    conn, c, is_postgres = get_db_connection()
     
-    # Convert value based on key type
-    if key == "media_type":
-        final_value = value
-    else:
-        final_value = int(value)
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f"SELECT * FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+        row = c.fetchone()
+        
+        if row is None:
+            c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
+            conn.commit()
+            conn.close()
+            return get_fasting_reminders_settings(chat_id)
+        
+        result = {
+            "chat_id": row[0],
+            "monday_thursday_enabled": bool(row[1]),
+            "arafah_reminder_enabled": bool(row[2]),
+            "reminder_time": row[3]
+        }
+        return result
+    except Exception as e:
+        logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
+
+def update_fasting_reminder_setting(chat_id: int, key: str, value):
+    """Update a specific fasting reminder setting."""
+    # Whitelist validation to prevent SQL injection
+    allowed_keys = {
+        "monday_thursday_enabled", "arafah_reminder_enabled", "reminder_time"
+    }
+    if key not in allowed_keys:
+        logger.error(f"Invalid fasting reminder setting key: {key}")
+        return
     
-    # Safe to use f-string here as key is validated against whitelist above
-    c.execute(f"UPDATE hajj_eid_settings SET {key} = ? WHERE chat_id = ?", (final_value, chat_id))
-    conn.commit()
-    conn.close()
-    logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Ensure settings exist
+        c.execute(f"SELECT chat_id FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+        if not c.fetchone():
+            c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
+        
+        # Convert value based on key type
+        if key == "reminder_time":
+            final_value = value
+        else:
+            final_value = int(value)
+        
+        # Safe to use f-string here as key is validated against whitelist above
+        c.execute(f"UPDATE fasting_reminders SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
+        conn.commit()
+        logger.info(f"Updated fasting reminder {key} = {value} for chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error updating fasting reminder setting: {e}", exc_info=True)
+        raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
@@ -1037,6 +1280,84 @@ def send_special_azkar(chat_id: int, azkar_type: str):
     except Exception as e:
         logger.error(f"Error sending {azkar_type} azkar to chat {chat_id}: {e}", exc_info=True)
 
+def send_fasting_reminder(chat_id: int, reminder_type: str):
+    """
+    Send fasting reminder to a chat.
+    
+    Args:
+        chat_id (int): Chat ID to send to
+        reminder_type (str): Type of reminder - 'monday_thursday' or 'arafah'
+    """
+    try:
+        settings = get_chat_settings(chat_id)
+        
+        if not settings["is_enabled"]:
+            return
+        
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        if reminder_type == "monday_thursday" and not fasting_settings["monday_thursday_enabled"]:
+            return
+        
+        if reminder_type == "arafah" and not fasting_settings["arafah_reminder_enabled"]:
+            return
+        
+        # Prepare reminder message
+        if reminder_type == "monday_thursday":
+            # Determine which day - reminder is sent day before fasting
+            # Scheduled on: Sunday (6) evening -> Fasting: Monday (0)
+            # Scheduled on: Wednesday (2) evening -> Fasting: Thursday (3)
+            today = datetime.now(TIMEZONE)
+            # If today is Sunday (6), tomorrow is Monday
+            # If today is Wednesday (2), tomorrow is Thursday
+            if today.weekday() == 6:
+                day_name = "الإثنين"
+            elif today.weekday() == 2:
+                day_name = "الخميس"
+            else:
+                # Fallback - shouldn't happen with correct scheduling
+                day_name = "الإثنين أو الخميس"
+            
+            message = (
+                f"🌙 *تذكير بصيام {day_name}*\n\n"
+                f"غداً هو يوم {day_name} المبارك\n\n"
+                "عن أبي قتادة رضي الله عنه أن رسول الله ﷺ سُئِل عن صوم يوم الاثنين، فقال:\n"
+                '"ذاك يوم وُلِدتُ فيه، ويوم بُعِثتُ فيه، أو أُنزِل عليَّ فيه"\n'
+                "رواه مسلم\n\n"
+                "📿 *فضل صيام الاثنين والخميس:*\n"
+                "• تُعرض الأعمال على الله يومي الاثنين والخميس\n"
+                "• كان النبي ﷺ يحرص على صيامهما\n"
+                "• صيامهما سنة مستحبة\n\n"
+                "اللهم تقبل منا الصيام والقيام وصالح الأعمال 🤲"
+            )
+        else:  # arafah
+            message = (
+                "🕋 *تذكير بصيام يوم عرفة*\n\n"
+                "غداً هو يوم عرفة المبارك - التاسع من ذي الحجة\n\n"
+                "قال رسول الله ﷺ:\n"
+                '"صيام يوم عرفة، أحتسب على الله أن يكفر السنة التي قبله، والسنة التي بعده"\n'
+                "رواه مسلم\n\n"
+                "📿 *فضل صيام يوم عرفة:*\n"
+                "• يكفر ذنوب سنتين (السنة الماضية والقادمة)\n"
+                "• من أفضل الأيام عند الله\n"
+                "• خير الدعاء دعاء يوم عرفة\n\n"
+                "🤲 *أفضل دعاء يوم عرفة:*\n"
+                "لا إله إلا الله وحده لا شريك له، له الملك وله الحمد، وهو على كل شيء قدير\n\n"
+                "اللهم تقبل منا الصيام والدعاء 🌙"
+            )
+        
+        bot.send_message(chat_id, message, parse_mode="Markdown")
+        logger.info(f"Sent {reminder_type} fasting reminder to {chat_id}")
+        
+    except telebot.apihelper.ApiTelegramException as e:
+        if "blocked" in str(e).lower() or "kicked" in str(e).lower():
+            logger.warning(f"Bot blocked/kicked from {chat_id}")
+            update_chat_setting(chat_id, "is_enabled", 0)
+        else:
+            logger.error(f"Failed sending {reminder_type} reminder to {chat_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error sending {reminder_type} reminder to chat {chat_id}: {e}", exc_info=True)
+
 # ────────────────────────────────────────────────
 #               Content - أذكار الصباح
 # ────────────────────────────────────────────────
@@ -1314,6 +1635,35 @@ def schedule_chat_jobs(chat_id: int):
                 replace_existing=True
             )
             logger.info(f"Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}")
+        
+        # Fasting Reminders
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        # Monday/Thursday fasting reminders
+        if fasting_settings["monday_thursday_enabled"]:
+            try:
+                h, m = map(int, fasting_settings["reminder_time"].split(":"))
+                # Schedule for Sunday (day before Monday) and Wednesday (day before Thursday)
+                scheduler.add_job(
+                    send_fasting_reminder,
+                    CronTrigger(day_of_week="sun", hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "monday_thursday"],
+                    id=f"monday_reminder_{chat_id}",
+                    replace_existing=True
+                )
+                scheduler.add_job(
+                    send_fasting_reminder,
+                    CronTrigger(day_of_week="wed", hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "monday_thursday"],
+                    id=f"thursday_reminder_{chat_id}",
+                    replace_existing=True
+                )
+                logger.info(f"Scheduled Monday/Thursday fasting reminders at {fasting_settings['reminder_time']} for chat {chat_id}")
+            except (ValueError, AttributeError) as e:
+                logger.error(f"Invalid reminder_time format '{fasting_settings.get('reminder_time', 'unknown')}' for chat {chat_id}: {e}")
+        
+        # Note: Arafah reminder would need Islamic calendar integration
+        # For now, we'll add a placeholder that can be triggered manually or via Islamic date check
 
         logger.info(f"Scheduled jobs for chat {chat_id}")
     except Exception as e:
@@ -1389,6 +1739,19 @@ def cmd_settings_markup():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="settings_panel")
+    )
+    return markup
+
+def add_support_buttons(markup: types.InlineKeyboardMarkup):
+    """
+    Add developer and official group support buttons to a markup.
+    
+    Args:
+        markup: The InlineKeyboardMarkup to add buttons to
+    """
+    markup.add(
+        types.InlineKeyboardButton("👨‍💻 الدعم الفني", url="https://t.me/dev3bod"),
+        types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar")
     )
     return markup
 
@@ -1508,6 +1871,9 @@ def cmd_start(message: types.Message):
                 markup.add(
                     types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
                     types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
+                )
+                markup.add(
+                    types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="group_fasting_reminders")
                 )
 
                 interval_text = ""
@@ -1674,6 +2040,9 @@ def callback_open_settings(call: types.CallbackQuery):
             "✨ *الأدعية المتنوعة*\n"
             "• فواصل زمنية من دقيقة إلى يوم كامل\n"
             "• نصوص، صور، صوتيات، ملفات PDF\n\n"
+            "🌙 *تذكيرات الصيام*\n"
+            "• تذكير بصيام الاثنين والخميس\n"
+            "• تذكير بصيام يوم عرفة\n\n"
             "*ملاحظة:* هذه الإعدادات مستقلة لكل مجموعة"
         )
         
@@ -1685,6 +2054,7 @@ def callback_open_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("✨ الأدعية المتنوعة", callback_data="diverse_azkar_settings"),
             types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="ramadan_settings"),
             types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="hajj_eid_settings"),
+            types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="fasting_reminders_settings"),
             types.InlineKeyboardButton("📷 إعدادات الوسائط", callback_data="media_settings"),
             types.InlineKeyboardButton("🕐 إعدادات المواعيد", callback_data="schedule_settings")
         )
@@ -1767,6 +2137,7 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1822,6 +2193,7 @@ def callback_friday_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1880,6 +2252,7 @@ def callback_media_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("🎲 نوع الوسائط: عشوائي", callback_data="media_type_all"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -1967,6 +2340,7 @@ def callback_schedule_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2031,6 +2405,7 @@ def callback_diverse_azkar_settings(call: types.CallbackQuery):
             types.InlineKeyboardButton("24 ساعة", callback_data="diverse_interval_1440")
         )
         markup.add(types.InlineKeyboardButton("« العودة", callback_data="open_settings"))
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2117,6 +2492,7 @@ def callback_ramadan_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2174,6 +2550,7 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
         markup.add(
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
+        add_support_buttons(markup)
         
         bot.edit_message_text(
             settings_text,
@@ -2187,6 +2564,60 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_hajj_eid_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "fasting_reminders_settings")
+def callback_fasting_reminders_settings(call: types.CallbackQuery):
+    """
+    Handle callback for fasting reminders settings panel.
+    """
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "تذكيرات الصيام")
+        
+        settings_text = (
+            "🌙 *تذكيرات الصيام*\n\n"
+            "*تذكير بصيام الاثنين والخميس:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
+            "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
+            "• قابل للتخصيص من إعدادات المواعيد\n\n"
+            "*فضل صيام الاثنين والخميس:*\n"
+            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+            "*تذكير بصيام يوم عرفة:*\n"
+            "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
+            "• يوم عرفة هو التاسع من ذي الحجة\n\n"
+            "*فضل صيام يوم عرفة:*\n"
+            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر السنة التي قبله، والسنة التي بعده\"\n\n"
+            "*للتفعيل في مجموعة:*\n"
+            "استخدم `/start` في المجموعة وفعّل التذكيرات المطلوبة"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="open_settings")
+        )
+        add_support_buttons(markup)
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Fasting reminders settings displayed for user {call.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_fasting_reminders_settings: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -2460,6 +2891,85 @@ def callback_toggle_hajj_eid(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_toggle_hajj_eid: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "group_fasting_reminders")
+def callback_group_fasting_reminders(call: types.CallbackQuery):
+    """
+    Handle fasting reminders settings for a specific group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "تذكيرات الصيام")
+        
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        
+        settings_text = (
+            "🌙 *تذكيرات الصيام*\n\n"
+            f"وقت التذكير: {fasting_settings['reminder_time']}\n\n"
+            "قم بتفعيل أو تعطيل التذكيرات المطلوبة:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        fasting_btns = [
+            ("monday_thursday_enabled", "🌙 تذكير صيام الاثنين والخميس"),
+            ("arafah_reminder_enabled", "🕋 تذكير صيام يوم عرفة")
+        ]
+        
+        for key, label in fasting_btns:
+            status = "✅" if fasting_settings[key] else "❌"
+            markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_fasting_{key}"))
+        
+        bot.edit_message_text(
+            settings_text,
+            chat_id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+        logger.info(f"Group fasting reminders settings displayed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in callback_group_fasting_reminders: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_fasting_"))
+def callback_toggle_fasting(call: types.CallbackQuery):
+    """
+    Toggle fasting reminder setting for a group.
+    """
+    try:
+        chat_id = call.message.chat.id
+        
+        if not bot.get_chat_member(chat_id, call.from_user.id).status in ["administrator", "creator"]:
+            bot.answer_callback_query(call.id, "هذا متاح للمشرفين فقط", show_alert=True)
+            return
+        
+        key = call.data.replace("toggle_fasting_", "")
+        fasting_settings = get_fasting_reminders_settings(chat_id)
+        new_value = not fasting_settings[key]
+        
+        update_fasting_reminder_setting(chat_id, key, new_value)
+        schedule_chat_jobs(chat_id)
+        
+        status_text = "تم التفعيل" if new_value else "تم التعطيل"
+        bot.answer_callback_query(call.id, f"✓ {status_text}")
+        
+        # Refresh the settings view
+        callback_group_fasting_reminders(call)
+        
+    except Exception as e:
+        logger.error(f"Error in callback_toggle_fasting: {e}", exc_info=True)
         bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
 
 @bot.message_handler(commands=["status"])
