@@ -3623,13 +3623,6 @@ def callback_hajj_eid_settings(call: types.CallbackQuery):
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
             pass
-        
-    except Exception as e:
-        logger.error(f"Error in callback_hajj_eid_settings: {e}", exc_info=True)
-        try:
-            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
-        except Exception:
-            pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("fasting_reminders"))
 def callback_fasting_reminders_settings(call: types.CallbackQuery):
@@ -3640,7 +3633,9 @@ def callback_fasting_reminders_settings(call: types.CallbackQuery):
     try:
         # Extract chat_id from callback data if present
         chat_id = None
-        if "_" in call.data and call.data.count("_") >= 1 and not call.data.endswith("_settings"):
+        # Check if this is the group-specific format (fasting_reminders_{chat_id})
+        # vs the general settings format (fasting_reminders_settings)
+        if call.data != "fasting_reminders_settings":
             # New format: fasting_reminders_{chat_id}
             parts = call.data.split("_")
             try:
