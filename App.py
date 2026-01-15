@@ -422,12 +422,36 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
         bool: True if user is admin/creator in any group, False otherwise
         
     This function:
+    - First checks the admins database for efficiency
+    - Falls back to Telegram API check if database is empty or user not found
     - Connects to PostgreSQL database if DATABASE_URL is available, falls back to SQLite
-    - Retrieves all group chat_ids (chat_id < 0) from chat_settings table
-    - Checks if the user is an admin or creator in any of those groups
-    - Uses try-except to handle errors gracefully
+    
+    Note: Database connections are opened and closed for each call. This is by design
+    to avoid connection state issues in the multi-threaded Flask + Gunicorn environment.
+    For high-volume scenarios, consider implementing connection pooling.
     """
     try:
+        # First, check the admins database for efficiency
+        # Note: Connection is opened/closed per call to avoid threading issues
+        conn, c, is_postgres = get_db_connection()
+        
+        try:
+            placeholder = "%s" if is_postgres else "?"
+            c.execute(f'''
+                SELECT COUNT(*) FROM admins 
+                WHERE user_id = {placeholder}
+            ''', (user_id,))
+            
+            count = c.fetchone()[0]
+            
+            if count > 0:
+                logger.debug(f"User {user_id} found in admins database ({count} groups)")
+                return True
+        finally:
+            conn.close()
+        
+        # If not found in database, fall back to Telegram API check
+        # This ensures we don't miss admins who haven't used /start yet
         chat_ids = []
         
         # Try PostgreSQL first if available
@@ -451,12 +475,23 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
                 chat_ids = [row[0] for row in c.fetchall()]
             logger.debug(f"Retrieved {len(chat_ids)} group chat_ids from SQLite")
         
-        # Check admin status in each group
+        # Check admin status in each group via Telegram API
         for chat_id in chat_ids:
             try:
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ["administrator", "creator"]:
-                    logger.info(f"User {user_id} is admin in group {chat_id}")
+                    logger.info(f"User {user_id} is admin in group {chat_id} (API check)")
+                    # Save to database for future efficiency
+                    try:
+                        save_admin_info(
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            username=member.user.username,
+                            first_name=member.user.first_name,
+                            last_name=member.user.last_name
+                        )
+                    except Exception:
+                        pass  # Don't fail the check if save fails
                     return True
             except Exception as e:
                 # User might not be in this group, or bot might have been removed
@@ -985,6 +1020,9 @@ def is_user_admin_of_chat(user_id: int, chat_id: int) -> bool:
     """
     Check if a user is an admin of a specific chat.
     
+    This function first checks the database for efficiency, then falls back
+    to Telegram API if not found in database.
+    
     Args:
         user_id (int): The Telegram user ID to check
         chat_id (int): The chat ID to check against
@@ -992,8 +1030,96 @@ def is_user_admin_of_chat(user_id: int, chat_id: int) -> bool:
     Returns:
         bool: True if user is admin of this chat, False otherwise
     """
+    # First check database
     admin_info = get_admin_info(user_id, chat_id)
-    return admin_info is not None
+    if admin_info is not None:
+        return True
+    
+    # If not in database, check via Telegram API
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        is_admin = member.status in ["administrator", "creator"]
+        
+        if is_admin:
+            # Save to database for future efficiency
+            try:
+                save_admin_info(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    username=member.user.username,
+                    first_name=member.user.first_name,
+                    last_name=member.user.last_name
+                )
+            except Exception as e:
+                logger.warning(f"Could not save admin info: {e}")
+        
+        return is_admin
+    except Exception as e:
+        logger.warning(f"Could not check admin status via API: {e}")
+        return False
+
+def sync_group_admins(chat_id: int) -> int:
+    """
+    Fetch and save all current administrators from a group.
+    
+    This function queries Telegram for all administrators in a group
+    and saves their information to the database. It's called:
+    - When bot is added to a group as admin
+    - When /start is used in a group
+    - Periodically to keep admin list up-to-date
+    
+    Args:
+        chat_id (int): The group chat ID
+        
+    Returns:
+        int: Number of admins synced, or -1 on error
+    """
+    try:
+        # Get all administrators from Telegram
+        admins = bot.get_chat_administrators(chat_id)
+        
+        if not admins:
+            logger.warning(f"No admins found for chat {chat_id}")
+            return 0
+        
+        # Check if this is the first sync (no existing admins in database)
+        existing_admins = get_all_admins_for_chat(chat_id)
+        is_first_sync = len(existing_admins) == 0
+        
+        synced_count = 0
+        for admin in admins:
+            # Skip bot accounts (don't save bots as admins)
+            if admin.user.is_bot:
+                continue
+            
+            # Mark as primary if this is the group creator
+            # or if this is the first admin in the first sync and no creator was found
+            is_primary = False
+            if is_first_sync:
+                if admin.status == "creator":
+                    # Group creator is always the primary admin
+                    is_primary = True
+                elif synced_count == 0:
+                    # Fallback: if no creator found yet, mark first admin as primary
+                    is_primary = True
+            
+            # Save admin info
+            save_admin_info(
+                user_id=admin.user.id,
+                chat_id=chat_id,
+                username=admin.user.username,
+                first_name=admin.user.first_name,
+                last_name=admin.user.last_name,
+                is_primary_admin=is_primary
+            )
+            synced_count += 1
+        
+        logger.info(f"Synced {synced_count} admins for chat {chat_id}")
+        return synced_count
+        
+    except Exception as e:
+        logger.error(f"Error syncing admins for chat {chat_id}: {e}", exc_info=True)
+        return -1
 
 # ────────────────────────────────────────────────
 #               Load Azkar from JSON Files
@@ -2027,6 +2153,7 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
     """
     Handle bot membership changes in chats.
     Automatically enables/disables the bot based on admin status.
+    Also syncs all group admins when bot is added as admin.
     """
     try:
         chat_id = update.chat.id
@@ -2037,6 +2164,13 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
         if new_status in ["administrator", "creator"]:
             update_chat_setting(chat_id, "is_enabled", 1)
             schedule_chat_jobs(chat_id)
+            
+            # Sync all group admins when bot is added as admin
+            logger.info(f"Syncing admins for chat {chat_id} after bot was added as admin")
+            synced_count = sync_group_admins(chat_id)
+            if synced_count > 0:
+                logger.info(f"Successfully synced {synced_count} admins for chat {chat_id}")
+            
             try:
                 bot.send_message(
                     chat_id,
@@ -2396,7 +2530,14 @@ def cmd_start(message: types.Message):
                 user_is_admin = False
             
             if user_is_admin:
-                # Save admin information - mark as primary if this is the first admin
+                # Sync all admins from the group to keep database up-to-date
+                try:
+                    logger.info(f"Syncing admins for chat {message.chat.id} from /start command")
+                    sync_group_admins(message.chat.id)
+                except Exception as e:
+                    logger.error(f"Error syncing admins in /start: {e}")
+                
+                # Save the user who invoked /start as well (in case sync missed them)
                 try:
                     user = message.from_user
                     # Check if there are any existing admins for this chat
