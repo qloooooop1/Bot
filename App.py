@@ -18,11 +18,19 @@ WEBHOOK_URL = 'https://bot-8c0e.onrender.com'
 # الحصول على التوكن من متغير البيئة أو قيمة افتراضية
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
 
+# التحقق من وجود التوكن
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required. Please set it before running the bot.")
+
 # المنفذ
 PORT = int(os.environ.get('PORT', 5000))
 
 # المنطقة الزمنية
 TIMEZONE = pytz.timezone('Asia/Riyadh')
+
+# إنشاء مسار آمن للـ webhook (hash من التوكن بدلاً من التوكن نفسه)
+import hashlib
+WEBHOOK_PATH = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()
 
 # ============= إنشاء البوت وتطبيق Flask =============
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -694,17 +702,17 @@ def index():
 def set_webhook():
     """ضبط الـ webhook"""
     try:
-        webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_PATH}"
         bot.remove_webhook()
         result = bot.set_webhook(url=webhook_url)
         if result:
-            return f"✅ تم ضبط Webhook بنجاح!\nURL: {webhook_url}"
+            return f"✅ تم ضبط Webhook بنجاح!"
         else:
             return "❌ فشل ضبط Webhook"
     except Exception as e:
         return f"❌ خطأ: {str(e)}"
 
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+@app.route(f'/{WEBHOOK_PATH}', methods=['POST'])
 def webhook():
     """معالج الـ webhook"""
     try:
@@ -742,10 +750,10 @@ def main():
         
         # إعداد الـ webhook تلقائياً عند التشغيل
         try:
-            webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+            webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_PATH}"
             bot.remove_webhook()
             bot.set_webhook(url=webhook_url)
-            print(f"✅ تم ضبط Webhook: {webhook_url}")
+            print(f"✅ تم ضبط Webhook بنجاح")
         except Exception as e:
             print(f"⚠️ تحذير: فشل ضبط Webhook تلقائياً: {e}")
             print("💡 يمكنك ضبطه يدوياً عبر زيارة: /setwebhook")
