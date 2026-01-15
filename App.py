@@ -181,6 +181,20 @@ def init_db():
         )
     ''')
     
+    # Admin/supervisor information table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS admins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            added_at INTEGER DEFAULT (strftime('%s', 'now')),
+            UNIQUE(user_id, chat_id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("Database initialized with all tables")
@@ -264,6 +278,20 @@ def init_postgres_db():
                         arafah_reminder_enabled INTEGER DEFAULT 1,
                         reminder_time TEXT DEFAULT '21:00',
                         FOREIGN KEY (chat_id) REFERENCES chat_settings(chat_id)
+                    )
+                ''')
+                
+                # Admin/supervisor information table
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS admins (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        chat_id BIGINT NOT NULL,
+                        username TEXT,
+                        first_name TEXT,
+                        last_name TEXT,
+                        added_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
+                        UNIQUE(user_id, chat_id)
                     )
                 ''')
                 
@@ -674,12 +702,12 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
             "arafah_reminder_enabled": bool(row[2]),
             "reminder_time": row[3]
         }
+        conn.close()
         return result
     except Exception as e:
         logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
-        raise
-    finally:
         conn.close()
+        raise
 
 def update_fasting_reminder_setting(chat_id: int, key: str, value):
     """Update a specific fasting reminder setting."""
@@ -714,6 +742,128 @@ def update_fasting_reminder_setting(chat_id: int, key: str, value):
     except Exception as e:
         logger.error(f"Error updating fasting reminder setting: {e}", exc_info=True)
         raise
+    finally:
+        conn.close()
+
+# ────────────────────────────────────────────────
+#               Admin Management Functions
+# ────────────────────────────────────────────────
+
+def save_admin_info(user_id: int, chat_id: int, username: str = None, first_name: str = None, last_name: str = None):
+    """
+    Save or update admin/supervisor information in the database.
+    
+    Args:
+        user_id (int): Telegram user ID
+        chat_id (int): Chat ID where user is admin
+        username (str): User's username (optional)
+        first_name (str): User's first name (optional)
+        last_name (str): User's last name (optional)
+    """
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        
+        # Try to insert, on conflict update
+        if is_postgres:
+            c.execute(f'''
+                INSERT INTO admins (user_id, chat_id, username, first_name, last_name, added_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, EXTRACT(EPOCH FROM NOW()))
+                ON CONFLICT (user_id, chat_id)
+                DO UPDATE SET username = EXCLUDED.username, 
+                             first_name = EXCLUDED.first_name, 
+                             last_name = EXCLUDED.last_name
+            ''', (user_id, chat_id, username, first_name, last_name))
+        else:
+            # SQLite - use INSERT OR REPLACE
+            c.execute(f'''
+                INSERT OR REPLACE INTO admins (user_id, chat_id, username, first_name, last_name, added_at)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, strftime('%s', 'now'))
+            ''', (user_id, chat_id, username, first_name, last_name))
+        
+        conn.commit()
+        logger.info(f"Saved admin info for user {user_id} in chat {chat_id}")
+    except Exception as e:
+        logger.error(f"Error saving admin info: {e}", exc_info=True)
+    finally:
+        conn.close()
+
+def get_admin_info(user_id: int, chat_id: int) -> dict:
+    """
+    Get admin information for a specific user in a chat.
+    
+    Args:
+        user_id (int): Telegram user ID
+        chat_id (int): Chat ID
+        
+    Returns:
+        dict: Admin information or None if not found
+    """
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f'''
+            SELECT user_id, chat_id, username, first_name, last_name, added_at
+            FROM admins
+            WHERE user_id = {placeholder} AND chat_id = {placeholder}
+        ''', (user_id, chat_id))
+        
+        row = c.fetchone()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "chat_id": row[1],
+                "username": row[2],
+                "first_name": row[3],
+                "last_name": row[4],
+                "added_at": row[5]
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Error getting admin info: {e}", exc_info=True)
+        return None
+    finally:
+        conn.close()
+
+def get_all_admins_for_chat(chat_id: int) -> list:
+    """
+    Get all admins for a specific chat.
+    
+    Args:
+        chat_id (int): Chat ID
+        
+    Returns:
+        list: List of admin dictionaries
+    """
+    conn, c, is_postgres = get_db_connection()
+    
+    try:
+        placeholder = "%s" if is_postgres else "?"
+        c.execute(f'''
+            SELECT user_id, chat_id, username, first_name, last_name, added_at
+            FROM admins
+            WHERE chat_id = {placeholder}
+        ''', (chat_id,))
+        
+        rows = c.fetchall()
+        
+        admins = []
+        for row in rows:
+            admins.append({
+                "user_id": row[0],
+                "chat_id": row[1],
+                "username": row[2],
+                "first_name": row[3],
+                "last_name": row[4],
+                "added_at": row[5]
+            })
+        return admins
+    except Exception as e:
+        logger.error(f"Error getting admins for chat: {e}", exc_info=True)
+        return []
     finally:
         conn.close()
 
@@ -1669,6 +1819,34 @@ def schedule_chat_jobs(chat_id: int):
     except Exception as e:
         logger.error(f"Error scheduling jobs for chat {chat_id}: {e}", exc_info=True)
 
+def schedule_all_chats():
+    """
+    Schedule jobs for all enabled chats in the database.
+    This should be called on bot startup to initialize all scheduled jobs.
+    """
+    try:
+        conn, c, is_postgres = get_db_connection()
+        
+        try:
+            placeholder = "%s" if is_postgres else "?"
+            c.execute(f"SELECT chat_id FROM chat_settings WHERE is_enabled = 1")
+            chat_ids = [row[0] for row in c.fetchall()]
+            
+            logger.info(f"Scheduling jobs for {len(chat_ids)} enabled chats...")
+            
+            for chat_id in chat_ids:
+                try:
+                    schedule_chat_jobs(chat_id)
+                except Exception as e:
+                    logger.error(f"Error scheduling jobs for chat {chat_id}: {e}")
+            
+            logger.info(f"✓ Completed scheduling jobs for {len(chat_ids)} chats")
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error in schedule_all_chats: {e}", exc_info=True)
+
 # ────────────────────────────────────────────────
 #               Bot Handlers
 # ────────────────────────────────────────────────
@@ -1843,70 +2021,51 @@ def cmd_start(message: types.Message):
                 user_is_admin = False
             
             if user_is_admin:
-                # User is admin - show settings panel directly in group
-                settings = get_chat_settings(message.chat.id)
-                diverse_settings = get_diverse_azkar_settings(message.chat.id)
-
-                markup = types.InlineKeyboardMarkup(row_width=2)
-
-                btns = [
-                    ("morning_azkar", "🌅 أذكار الصباح"),
-                    ("evening_azkar", "🌙 أذكار المساء"),
-                    ("friday_sura", "📿 سورة الكهف"),
-                    ("friday_dua", "🕌 أدعية الجمعة"),
-                    ("sleep_message", "😴 رسالة النوم"),
-                    ("delete_service_messages", "🗑️ حذف رسائل الخدمة")
-                ]
-
-                for key, label in btns:
-                    status = "✅" if settings[key] else "❌"
-                    markup.add(types.InlineKeyboardButton(f"{label} {status}", callback_data=f"toggle_{key}"))
+                # Save admin information
+                try:
+                    user = message.from_user
+                    save_admin_info(
+                        user_id=user.id,
+                        chat_id=message.chat.id,
+                        username=user.username,
+                        first_name=user.first_name,
+                        last_name=user.last_name
+                    )
+                except Exception as e:
+                    logger.error(f"Error saving admin info: {e}")
                 
-                # Add diverse azkar button with interval info
-                diverse_status = "✅" if diverse_settings["enabled"] else "❌"
-                diverse_label = f"✨ الأدعية المتنوعة {diverse_status}"
-                markup.add(types.InlineKeyboardButton(diverse_label, callback_data="group_diverse_settings"))
-                
-                # Add special settings buttons
-                markup.add(
-                    types.InlineKeyboardButton("🌙 إعدادات رمضان", callback_data="group_ramadan_settings"),
-                    types.InlineKeyboardButton("🕋 إعدادات الحج والعيد", callback_data="group_hajj_eid_settings")
-                )
-                markup.add(
-                    types.InlineKeyboardButton("🌙 تذكيرات الصيام", callback_data="group_fasting_reminders")
-                )
-
-                interval_text = ""
-                if diverse_settings["enabled"]:
-                    interval_minutes = diverse_settings["interval_minutes"]
-                    if interval_minutes < 60:
-                        interval_text = f"\n✨ الأدعية المتنوعة: كل {interval_minutes} دقيقة"
-                    elif interval_minutes < 1440:
-                        hours = interval_minutes // 60
-                        interval_text = f"\n✨ الأدعية المتنوعة: كل {hours} ساعة"
-                    else:
-                        interval_text = f"\n✨ الأدعية المتنوعة: يومياً"
-
-                text = (
-                    "⚙️ *لوحة التحكم المتقدمة*\n\n"
-                    f"حالة البوت: {'🟢 مفعّل' if settings['is_enabled'] else '🔴 معطّل'}\n\n"
-                    "الأوقات المجدولة:\n"
-                    f"🌅 الصباح: {settings['morning_time']}\n"
-                    f"🌙 المساء: {settings['evening_time']}\n"
-                    f"😴 النوم: {settings['sleep_time']}\n"
-                    f"📿 سورة الكهف: الجمعة 09:00\n"
-                    f"🕌 دعاء الجمعة: الجمعة 10:00"
-                    f"{interval_text}\n\n"
-                    "اضغط لتغيير الإعدادات"
-                )
-
-                bot.send_message(
-                    message.chat.id,
-                    text,
-                    parse_mode="Markdown",
-                    reply_markup=markup
-                )
-                logger.info(f"/start opened settings by {message.from_user.id} in {message.chat.id}")
+                # Send message in group prompting admin to open private chat
+                try:
+                    bot_info = bot.get_me()
+                    bot_username = bot_info.username or "NourAdhkarBot"
+                    
+                    # Create a deep link to open settings in private chat
+                    start_link = f"https://t.me/{bot_username}?start=settings"
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=1)
+                    markup.add(
+                        types.InlineKeyboardButton(
+                            "⚙️ فتح لوحة التحكم (الخاص)",
+                            url=start_link
+                        )
+                    )
+                    
+                    bot.send_message(
+                        message.chat.id,
+                        "⚙️ *إعدادات البوت*\n\n"
+                        "للحفاظ على خصوصية الإعدادات، يرجى فتح لوحة التحكم في الدردشة الخاصة.\n\n"
+                        "اضغط على الزر أدناه لفتح الإعدادات:",
+                        parse_mode="Markdown",
+                        reply_markup=markup
+                    )
+                    logger.info(f"/start in group {message.chat.id} - redirected admin {message.from_user.id} to private chat")
+                except Exception as e:
+                    logger.error(f"Error redirecting admin to private chat: {e}")
+                    bot.send_message(
+                        message.chat.id,
+                        "⚠️ حدث خطأ. يرجى المحاولة مرة أخرى",
+                        parse_mode="Markdown"
+                    )
             else:
                 # User is not admin - show guidance with buttons
                 markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2128,13 +2287,18 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
             "*الميزات:*\n"
             "• ✅/❌ تفعيل أو تعطيل لكل مجموعة\n"
             "• دعم الوسائط (صور، فيديو، ملفات)\n"
-            "• تخصيص الأوقات باستخدام `/start` في المجموعة\n\n"
+            "• تخصيص الأوقات باستخدام `/settime` في المجموعة\n\n"
+            "*أمثلة لتخصيص الأوقات:*\n"
+            "`/settime morning 06:30`\n"
+            "`/settime evening 19:00`\n\n"
             "*للتعديل في مجموعة معينة:*\n"
-            "استخدم `/start` في المجموعة وفعّل الميزات المطلوبة"
+            "استخدم الأوامر المذكورة في المجموعة التي تريد تخصيص أوقاتها"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
+            types.InlineKeyboardButton("⏰ أوقات شائعة للصباح", callback_data="morning_time_presets"),
+            types.InlineKeyboardButton("🌙 أوقات شائعة للمساء", callback_data="evening_time_presets"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         add_support_buttons(markup)
@@ -2151,6 +2315,98 @@ def callback_morning_evening_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_morning_evening_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "morning_time_presets")
+def callback_morning_time_presets(call: types.CallbackQuery):
+    """Show preset times for morning azkar as information."""
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "أوقات شائعة للصباح")
+        
+        settings_text = (
+            "⏰ *أوقات شائعة لأذكار الصباح*\n\n"
+            "*الأوقات المقترحة:*\n"
+            "• 04:30 - بعد صلاة الفجر مباشرة\n"
+            "• 05:00 - الافتراضي\n"
+            "• 06:00 - مع شروق الشمس تقريباً\n"
+            "• 07:00 - صباحاً\n\n"
+            "*لتخصيص الوقت:*\n"
+            "استخدم الأمر في المجموعة:\n"
+            "`/settime morning HH:MM`\n\n"
+            "*مثال:*\n"
+            "`/settime morning 06:00`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in callback_morning_time_presets: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "evening_time_presets")
+def callback_evening_time_presets(call: types.CallbackQuery):
+    """Show preset times for evening azkar as information."""
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "أوقات شائعة للمساء")
+        
+        settings_text = (
+            "🌙 *أوقات شائعة لأذكار المساء*\n\n"
+            "*الأوقات المقترحة:*\n"
+            "• 15:30 - بعد صلاة العصر\n"
+            "• 17:00 - قبل المغرب\n"
+            "• 18:00 - الافتراضي\n"
+            "• 19:00 - مساءً\n\n"
+            "*لتخصيص الوقت:*\n"
+            "استخدم الأمر في المجموعة:\n"
+            "`/settime evening HH:MM`\n\n"
+            "*مثال:*\n"
+            "`/settime evening 17:30`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="morning_evening_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in callback_evening_time_presets: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -2588,20 +2844,28 @@ def callback_fasting_reminders_settings(call: types.CallbackQuery):
             "*تذكير بصيام الاثنين والخميس:*\n"
             "• يتم إرسال تذكير في المساء قبل يوم الصيام\n"
             "• الوقت الافتراضي: 21:00 (9 مساءً)\n"
-            "• قابل للتخصيص من إعدادات المواعيد\n\n"
+            "• قابل للتخصيص من خلال الأمر `/setfastingtime`\n\n"
             "*فضل صيام الاثنين والخميس:*\n"
-            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، فأحب أن يُعرض عملي وأنا صائم\"\n\n"
+            "قال رسول الله ﷺ: \"تُعرض الأعمال يوم الاثنين والخميس، "
+            "فأحب أن يُعرض عملي وأنا صائم\"\n\n"
             "*تذكير بصيام يوم عرفة:*\n"
             "• يتم إرسال تذكير في المساء قبل يوم عرفة\n"
             "• يوم عرفة هو التاسع من ذي الحجة\n\n"
             "*فضل صيام يوم عرفة:*\n"
-            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر السنة التي قبله، والسنة التي بعده\"\n\n"
+            "قال رسول الله ﷺ: \"صيام يوم عرفة، أحتسب على الله أن يكفر "
+            "السنة التي قبله، والسنة التي بعده\"\n\n"
+            "*لتخصيص وقت التذكير:*\n"
+            "استخدم الأمر في المجموعة:\n"
+            "`/setfastingtime HH:MM`\n\n"
+            "*مثال:*\n"
+            "`/setfastingtime 20:00`\n\n"
             "*للتفعيل في مجموعة:*\n"
-            "استخدم `/start` في المجموعة وفعّل التذكيرات المطلوبة"
+            "سيتم إضافة خيارات التفعيل/التعطيل في القائمة أدناه"
         )
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
+            types.InlineKeyboardButton("⏰ أوقات شائعة للتذكير", callback_data="fasting_time_presets"),
             types.InlineKeyboardButton("« العودة", callback_data="open_settings")
         )
         add_support_buttons(markup)
@@ -2618,6 +2882,56 @@ def callback_fasting_reminders_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_fasting_reminders_settings: {e}", exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
+        except Exception:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "fasting_time_presets")
+def callback_fasting_time_presets(call: types.CallbackQuery):
+    """Show preset times for fasting reminders as information."""
+    try:
+        is_admin = is_user_admin_in_any_group(call.from_user.id)
+        
+        if not is_admin:
+            bot.answer_callback_query(call.id, "⚠️ يجب أن تكون مشرفًا", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "أوقات شائعة للتذكير")
+        
+        settings_text = (
+            "⏰ *أوقات شائعة لتذكير الصيام*\n\n"
+            "*الأوقات المقترحة:*\n"
+            "• 20:00 - مساءً (بعد العشاء)\n"
+            "• 21:00 - الافتراضي\n"
+            "• 22:00 - قبل النوم\n"
+            "• 23:00 - ليلاً\n\n"
+            "*ملاحظة:*\n"
+            "يُرسل التذكير في المساء قبل يوم الصيام:\n"
+            "• الأحد مساءً → تذكير بصيام الإثنين\n"
+            "• الأربعاء مساءً → تذكير بصيام الخميس\n\n"
+            "*لتخصيص الوقت:*\n"
+            "استخدم الأمر في المجموعة:\n"
+            "`/setfastingtime HH:MM`\n\n"
+            "*مثال:*\n"
+            "`/setfastingtime 20:30`"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("« العودة", callback_data="fasting_reminders_settings")
+        )
+        
+        bot.edit_message_text(
+            settings_text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in callback_fasting_time_presets: {e}", exc_info=True)
         try:
             bot.answer_callback_query(call.id, "حدث خطأ", show_alert=True)
         except Exception:
@@ -3123,6 +3437,71 @@ def cmd_settime(message: types.Message):
         logger.error(f"Error in cmd_settime: {e}", exc_info=True)
         bot.send_message(message.chat.id, "حدث خطأ أثناء تحديث الوقت")
 
+@bot.message_handler(commands=["setfastingtime"])
+def cmd_setfastingtime(message: types.Message):
+    """
+    Set custom time for fasting reminders.
+    Usage: /setfastingtime <time>
+    Example: /setfastingtime 20:00
+    """
+    if message.chat.type == "private":
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر يعمل فقط في المجموعات")
+        return
+
+    if not bot.get_chat_member(message.chat.id, message.from_user.id).status in ["administrator", "creator"]:
+        bot.send_message(message.chat.id, "⚠️ هذا الأمر متاح للمشرفين فقط")
+        return
+
+    try:
+        # Parse command arguments
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(
+                message.chat.id,
+                "⚠️ *الاستخدام الصحيح:*\n"
+                "`/setfastingtime <وقت>`\n\n"
+                "*مثال:*\n"
+                "`/setfastingtime 20:00`\n\n"
+                "*ملاحظة:*\n"
+                "سيتم إرسال التذكير في المساء قبل يوم الصيام",
+                parse_mode="Markdown"
+            )
+            return
+
+        time_str = parts[1]
+
+        # Validate time format
+        try:
+            hour, minute = map(int, time_str.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError("Invalid time range")
+        except (ValueError, IndexError):
+            bot.send_message(
+                message.chat.id,
+                "⚠️ صيغة الوقت غير صحيحة\n"
+                "استخدم الصيغة: `HH:MM` (مثال: `20:30`)",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Update setting
+        update_fasting_reminder_setting(message.chat.id, "reminder_time", time_str)
+        schedule_chat_jobs(message.chat.id)
+
+        bot.send_message(
+            message.chat.id,
+            f"✅ تم تحديث وقت تذكير الصيام إلى `{time_str}`\n\n"
+            "سيتم إرسال التذكير:\n"
+            "• الأحد مساءً للتذكير بصيام الإثنين\n"
+            "• الأربعاء مساءً للتذكير بصيام الخميس",
+            parse_mode="Markdown"
+        )
+        logger.info(f"Fasting reminder time updated in chat {message.chat.id}: {time_str}")
+
+    except Exception as e:
+        logger.error(f"Error in cmd_setfastingtime: {e}", exc_info=True)
+        bot.send_message(message.chat.id, "حدث خطأ أثناء تحديث الوقت")
+
 @bot.message_handler(func=lambda message: True)
 def echo_all(message: types.Message):
     """
@@ -3503,6 +3882,13 @@ try:
         replace_existing=True
     )
     logger.info("✓ Webhook verification job scheduled (every 30 minutes)")
+    
+    # Schedule jobs for all enabled chats on startup
+    # This fixes the issue where diverse azkar and other scheduled jobs don't run after restart
+    logger.info("🔄 Initializing scheduled jobs for all enabled chats...")
+    schedule_all_chats()
+    logger.info("✅ All chat jobs initialized successfully")
+    
 except Exception as e:
     logger.critical(f"❌ Critical error during initial webhook setup: {e}", exc_info=True)
 
