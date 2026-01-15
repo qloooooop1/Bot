@@ -825,6 +825,10 @@ def echo_all(message: types.Message):
     """
     Echo handler for testing purposes - responds to all non-command messages.
     This helps verify that the bot is receiving and processing messages correctly.
+    
+    NOTE: This is a catch-all handler for testing. In production, you may want to
+    remove or modify this handler to avoid interfering with other functionality.
+    Currently limited to private chats only to minimize impact.
     """
     try:
         # Only respond in private chats to avoid spam in groups
@@ -923,9 +927,10 @@ def telegram_webhook():
     if request.headers.get('content-type') == 'application/json':
         try:
             json_string = request.get_data(as_text=True)
+            # Log first 200 chars for debugging - remove in production if concerned about sensitive data
             logger.info(f"Received JSON: {json_string[:200]}...")
             
-            update = telebot.types.Update.de_json(json_string)
+            update = types.Update.de_json(json_string)
             
             if update and update.message:
                 msg_text = getattr(update.message, 'text', None)
