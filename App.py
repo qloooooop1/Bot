@@ -704,7 +704,7 @@ def set_webhook():
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
     """معالج الـ webhook"""
-    if request.headers.get('content-type') == 'application/json':
+    if request.content_type == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
@@ -723,6 +723,18 @@ def health():
 
 # ============= بدء التشغيل =============
 
+def setup_webhook():
+    """إعداد الـ webhook تلقائياً"""
+    try:
+        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+        bot.remove_webhook()  # إزالة أي Webhook قديم
+        success = bot.set_webhook(url=webhook_url)
+        print(f"Webhook set: {success} to {webhook_url}")
+        return success
+    except Exception as e:
+        print(f"⚠️ تحذير: فشل ضبط Webhook: {e}")
+        return False
+
 def main():
     """الدالة الرئيسية لبدء البوت"""
     print("🚀 بدء تشغيل بوت الأذكار الإسلامية...")
@@ -737,13 +749,8 @@ def main():
         print(f"🔧 إعداد Webhook تلقائياً...")
         
         # إعداد الـ webhook تلقائياً عند التشغيل
-        try:
-            webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-            bot.remove_webhook()  # إزالة أي Webhook قديم
-            success = bot.set_webhook(url=webhook_url)
-            print(f"Webhook set: {success} to {webhook_url}")
-        except Exception as e:
-            print(f"⚠️ تحذير: فشل ضبط Webhook تلقائياً: {e}")
+        success = setup_webhook()
+        if not success:
             print("💡 يمكنك ضبطه يدوياً عبر زيارة: /setwebhook")
         
         print(f"🚀 تشغيل Flask على المنفذ {PORT}...")
@@ -758,7 +765,4 @@ if __name__ == '__main__':
     main()
 else:
     # على Render: ضبط Webhook
-    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-    bot.remove_webhook()  # إزالة أي Webhook قديم
-    success = bot.set_webhook(url=webhook_url)
-    print(f"Webhook set: {success} to {webhook_url}")
+    setup_webhook()
