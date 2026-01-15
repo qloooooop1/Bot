@@ -5,6 +5,7 @@ from datetime import datetime
 import pytz
 import random
 import sqlite3
+import json
 
 from flask import Flask, request, abort
 import telebot
@@ -16,12 +17,18 @@ from apscheduler.triggers.cron import CronTrigger
 #               Logging Setup
 # ────────────────────────────────────────────────
 
+# Configure logging with proper formatting
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy logs from libraries
+logging.getLogger('apscheduler').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # ────────────────────────────────────────────────
 #               Configuration
@@ -125,10 +132,135 @@ def update_chat_setting(chat_id: int, key: str, value):
     logger.info(f"Updated {key} = {value} for chat {chat_id}")
 
 # ────────────────────────────────────────────────
+#               Load Azkar from JSON Files
+# ────────────────────────────────────────────────
+
+def load_azkar_from_json(filename):
+    """
+    Load azkar from JSON file and format them for display.
+    
+    Args:
+        filename (str): Name of the JSON file in the azkar directory
+        
+    Returns:
+        list: List of formatted message strings, empty list on error
+        
+    The function reads a JSON file containing azkar data and formats each item
+    into a message string with icon, title, text, reference, and count if available.
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'azkar', filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        messages = []
+        icon = data.get('icon', '📿')
+        title = data.get('title', 'أذكار')
+        
+        # Handle different JSON structures
+        if 'azkar' in data:
+            for item in data['azkar']:
+                msg = f"{icon} *{title}*\n\n{item['text']}"
+                if item.get('reference'):
+                    msg += f"\n\n{item['reference']}"
+                if item.get('count'):
+                    msg += f"\n\n{item['count']}"
+                messages.append(msg)
+        
+        if 'closing' in data:
+            messages[-1] += f"\n\n{data['closing']}"
+        
+        return messages
+    except Exception as e:
+        logger.error(f"Error loading {filename}: {e}")
+        return []
+
+def load_friday_azkar():
+    """
+    Load Friday azkar with special structure including Kahf reminder and duas.
+    
+    Returns:
+        tuple: (kahf_reminder_msg, duas_list) where:
+            - kahf_reminder_msg (str): Formatted Kahf reminder message
+            - duas_list (list): List of formatted Friday dua messages
+            Returns ("", []) on error
+            
+    This function handles the special structure of Friday azkar which includes
+    a Surah Al-Kahf reminder and Friday-specific duas with related hadiths.
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'azkar', 'friday.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Kahf reminder
+        kahf = data['kahf_reminder']
+        kahf_msg = (
+            f"📿 *تذكير بسورة الكهف*\n\n"
+            f"{kahf['text']}\n\n"
+            f"{kahf['hadith']}\n\n"
+            f"{kahf['closing']}"
+        )
+        
+        # Friday duas
+        duas = []
+        hadith_idx = 0
+        hadiths = data.get('hadiths', [])
+        
+        for dua in data['duas']:
+            msg = f"🕌 *دعاء يوم الجمعة*\n\n{dua['text']}"
+            if dua.get('reference'):
+                msg += f"\n\n{dua['reference']}"
+            if dua.get('count'):
+                msg += f"\n\n{dua['count']}"
+            
+            # Add related hadith if available
+            if hadith_idx < len(hadiths):
+                hadith = hadiths[hadith_idx]
+                msg += f"\n\n✨ {hadith['text']}"
+                hadith_idx += 1
+            
+            duas.append(msg)
+        
+        return kahf_msg, duas
+    except Exception as e:
+        logger.error(f"Error loading friday.json: {e}")
+        return "", []
+
+def load_sleep_azkar():
+    """
+    Load sleep azkar with special structure.
+    
+    Returns:
+        str: Formatted sleep azkar message combining all sleep azkar and closing message.
+             Returns empty string on error.
+             
+    This function handles the special structure of sleep azkar which combines
+    multiple surahs (Al-Ikhlas, Al-Falaq, Al-Nas) into a single message.
+    """
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), 'azkar', 'sleep.json')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        msg = f"{data['icon']} *{data['title']}*\n\n"
+        
+        for item in data['azkar']:
+            msg += f"{item['text']}\n\n"
+        
+        if 'closing' in data:
+            msg += data['closing']
+        
+        return msg
+    except Exception as e:
+        logger.error(f"Error loading sleep.json: {e}")
+        return ""
+
+# ────────────────────────────────────────────────
 #               Content - أذكار الصباح
 # ────────────────────────────────────────────────
 
-MORNING_AZKAR = [
+MORNING_AZKAR = load_azkar_from_json('morning.json') or [
     "🌅 *أذكار الصباح*\n\n"
     "﴿ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ ۚ لَّهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ ۗ مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ ۚ يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ ۖ وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ ۚ وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ ۖ وَلَا يَئُودُهُ حِفْظُهُمَا ۚ وَهُوَ الْعَلِيُّ الْعَظِيمُ ﴾\n\n"
     "📿 آية الكرسي - [البقرة: 255]",
@@ -182,7 +314,7 @@ MORNING_AZKAR = [
 #               أذكار المساء
 # ────────────────────────────────────────────────
 
-EVENING_AZKAR = [
+EVENING_AZKAR = load_azkar_from_json('evening.json') or [
     "🌙 *أذكار المساء*\n\n"
     "﴿ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ ۚ لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ ۚ لَّهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ ۗ مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ ۚ يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ ۖ وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ ۚ وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ ۖ وَلَا يَئُودُهُ حِفْظُهُمَا ۚ وَهُوَ الْعَلِيُّ الْعَظِيمُ ﴾\n\n"
     "📿 آية الكرسي - [البقرة: 255]",
@@ -228,25 +360,29 @@ EVENING_AZKAR = [
     "📿 سورة الإخلاص (ثلاث مرات)",
 ]
 
-FRIDAY_DUA = [
-    "🕌 *دعاء يوم الجمعة*\n\n"
-    "اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى سَيِّدِنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ\n\n"
-    "✨ قال رسول الله ﷺ: «مَن صلَّى عليَّ صلاةً واحدةً صلَّى اللهُ عليه بها عشرًا»",
+# Load Friday azkar
+KAHF_REMINDER, FRIDAY_DUA = load_friday_azkar() or ("", [])
+if not KAHF_REMINDER:
+    KAHF_REMINDER = (
+        "📿 *تذكير بسورة الكهف*\n\n"
+        "السلام عليكم ورحمة الله وبركاته\n\n"
+        "نُذَكِّرُكُم بقراءة سورة الكهف في هذا اليوم المبارك\n\n"
+        "قال رسول الله ﷺ: «مَن قرأَ سورةَ الكَهفِ في يومِ الجُمُعةِ، أضاءَ له مِن النُّورِ ما بيْنَ الجُمُعتَينِ»\n\n"
+        "🕌 جعلنا الله وإياكم من المواظبين على الطاعات"
+    )
 
-    "🕌 *دعاء يوم الجمعة*\n\n"
-    "اللَّهُمَّ إِنِّي أَسْأَلُكَ مِنَ الْخَيْرِ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ، وَأَعُوذُ بِكَ مِنَ الشَّرِّ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ\n\n"
-    "✨ دعاء مأثور",
-]
+if not FRIDAY_DUA:
+    FRIDAY_DUA = [
+        "🕌 *دعاء يوم الجمعة*\n\n"
+        "اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى سَيِّدِنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ\n\n"
+        "✨ قال رسول الله ﷺ: «مَن صلَّى عليَّ صلاةً واحدةً صلَّى اللهُ عليه بها عشرًا»",
 
-KAHF_REMINDER = (
-    "📿 *تذكير بسورة الكهف*\n\n"
-    "السلام عليكم ورحمة الله وبركاته\n\n"
-    "نُذَكِّرُكُم بقراءة سورة الكهف في هذا اليوم المبارك\n\n"
-    "قال رسول الله ﷺ: «مَن قرأَ سورةَ الكَهفِ في يومِ الجُمُعةِ، أضاءَ له مِن النُّورِ ما بيْنَ الجُمُعتَينِ»\n\n"
-    "🕌 جعلنا الله وإياكم من المواظبين على الطاعات"
-)
+        "🕌 *دعاء يوم الجمعة*\n\n"
+        "اللَّهُمَّ إِنِّي أَسْأَلُكَ مِنَ الْخَيْرِ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ، وَأَعُوذُ بِكَ مِنَ الشَّرِّ كُلِّهِ عَاجِلِهِ وَآجِلِهِ، مَا عَلِمْتُ مِنْهُ وَمَا لَمْ أَعْلَمْ\n\n"
+        "✨ دعاء مأثور",
+    ]
 
-SLEEP_MESSAGE = (
+SLEEP_MESSAGE = load_sleep_azkar() or (
     "😴 *أذكار النوم*\n\n"
     "﴿ قُلْ هُوَ اللَّهُ أَحَدٌ * اللَّهُ الصَّمَدُ * لَمْ يَلِدْ وَلَمْ يُولَدْ * وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ ﴾\n\n"
     "﴿ قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ * مِن شَرِّ مَا خَلَقَ * وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ * وَمِن شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ * وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ ﴾\n\n"
@@ -418,19 +554,15 @@ def cmd_start(message: types.Message):
     if message.chat.type == "private":
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("المطور", url="https://t.me/dev3bod"),
-            types.InlineKeyboardButton("المجموعة الرسمية", url="https://t.me/NourAdhkar")
+            types.InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/dev3bod"),
+            types.InlineKeyboardButton("👥 المجموعة الرسمية", url="https://t.me/NourAdhkar"),
+            types.InlineKeyboardButton("➕ إضافة البوت إلى مجموعة", url=f"https://t.me/{bot.get_me().username}?startgroup=true")
         )
         bot.reply_to(
             message,
-            "🌟 *مرحباً بك في بوت نور الذكر* 🌟\n\n"
-            "📿 بوت يرسل الأذكار والأدعية يومياً في المجموعات\n\n"
-            "✨ للتفعيل:\n"
-            "1. أضف البوت إلى مجموعتك\n"
-            "2. اجعله مشرفاً\n"
-            "3. سيعمل تلقائياً\n\n"
-            "⚙️ /settings للإعدادات\n"
-            "📊 /status للحالة",
+            "مرحباً، أنا بوت نور الذكر.\n\n"
+            "أقوم بنشر الأذكار اليومية والآيات والأحاديث بشكل تلقائي في المجموعات. "
+            "أضفني كمشرف لكي أعمل بشكل صحيح.",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -586,21 +718,35 @@ def cmd_disable(message: types.Message):
             job.remove()
     bot.send_message(message.chat.id, "✅ تم تعطيل البوت")
     logger.info(f"Bot disabled in {message.chat.id}")
-    @bot.message_handler(commands=['start'])
-def cmd_start(message):
-    bot.reply_to(message, "مرحبا! البوت شغال الآن 🚀\nأرسل /help للمساعدة")
-    logger.info(f"/start received from {message.from_user.id} in chat {message.chat.id}")
-    
 # ────────────────────────────────────────────────
 #               Flask Routes
 # ────────────────────────────────────────────────
 
 @app.route("/")
 def home():
-    return "نور الذكر – البوت يعمل ✓"
+    """Health check endpoint for monitoring services"""
+    return "نور الذكر – البوت يعمل ✓", 200
+
+@app.route("/health")
+def health():
+    """Detailed health check endpoint"""
+    try:
+        # Check webhook status
+        info = bot.get_webhook_info()
+        status = {
+            "status": "healthy",
+            "webhook_url": info.url,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message or "None"
+        }
+        return status, 200
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "unhealthy", "error": str(e)}, 500
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def telegram_webhook():
+    """Handle incoming webhook updates from Telegram"""
     if request.headers.get("content-type") == "application/json":
         try:
             json_string = request.get_data().decode("utf-8")
@@ -608,10 +754,16 @@ def telegram_webhook():
             if update:
                 bot.process_new_updates([update])
             return "", 200
+        except UnicodeDecodeError as e:
+            logger.error(f"Webhook decode error: {e}")
+            return "", 400
         except Exception as e:
             logger.error(f"Webhook processing error: {e}", exc_info=True)
+            # Return 200 to prevent Telegram from retrying
             return "", 200
-    abort(403)
+    else:
+        logger.warning(f"Invalid content-type: {request.headers.get('content-type')}")
+        abort(403)
 
 @app.route("/setwebhook", methods=["GET"])
 def manual_set_webhook():
@@ -638,23 +790,76 @@ Last error message    : {info.last_error_message or 'لا يوجد'}
         return f"خطأ: {str(e)}"
 
 # ────────────────────────────────────────────────
+#               Flask Error Handlers
+# ────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
+    logger.warning(f"404 error: {request.url}")
+    return "Not Found", 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors"""
+    logger.error(f"500 error: {error}", exc_info=True)
+    return "Internal Server Error", 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle uncaught exceptions"""
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    return "Internal Server Error", 500
+
+# ────────────────────────────────────────────────
 #               Auto Webhook Setup
 # ────────────────────────────────────────────────
 
 def setup_webhook():
-    try:
-        bot.remove_webhook()
-        success = bot.set_webhook(
-            url=WEBHOOK_URL,
-            drop_pending_updates=True,
-            allow_updates=["message", "edited_message", "channel_post", "my_chat_member"]
-        )
-        logger.info(f"Webhook auto-setup → {WEBHOOK_URL} | Success: {success}")
-    except Exception as e:
-        logger.critical(f"Webhook setup failed: {str(e)}", exc_info=True)
+    """Setup webhook with retry logic for gunicorn compatibility"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # Remove existing webhook first
+            bot.remove_webhook(drop_pending_updates=True)
+            logger.info("Previous webhook removed successfully")
+            
+            # Set new webhook
+            success = bot.set_webhook(
+                url=WEBHOOK_URL,
+                drop_pending_updates=True,
+                max_connections=100,
+                allowed_updates=["message", "edited_message", "channel_post", "my_chat_member", "callback_query"]
+            )
+            
+            if success:
+                logger.info(f"✓ Webhook setup successful → {WEBHOOK_URL}")
+                # Verify webhook was set correctly
+                info = bot.get_webhook_info()
+                logger.info(f"Webhook info: URL={info.url}, Pending={info.pending_update_count}")
+                return True
+            else:
+                logger.warning(f"Webhook setup returned False (attempt {attempt + 1}/{max_retries})")
+                
+        except Exception as e:
+            logger.error(f"Webhook setup error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(retry_delay)
+            else:
+                logger.critical(f"Failed to setup webhook after {max_retries} attempts", exc_info=True)
+                return False
+    
+    return False
 
 # Run once on import (critical for Render + gunicorn)
-setup_webhook()
+# This ensures webhook is set up when gunicorn loads the module
+try:
+    setup_webhook()
+except Exception as e:
+    logger.critical(f"Critical error during initial webhook setup: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Local Development Only
