@@ -157,11 +157,10 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
         
         # Fallback to SQLite if PostgreSQL not available or failed
         if not chat_ids:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("SELECT chat_id FROM chat_settings WHERE chat_id < 0")
-            chat_ids = [row[0] for row in c.fetchall()]
-            conn.close()
+            with sqlite3.connect(DB_FILE) as conn:
+                c = conn.cursor()
+                c.execute("SELECT chat_id FROM chat_settings WHERE chat_id < 0")
+                chat_ids = [row[0] for row in c.fetchall()]
             logger.debug(f"Retrieved {len(chat_ids)} group chat_ids from SQLite")
         
         # Check admin status in each group
@@ -765,7 +764,7 @@ def cmd_start(message: types.Message):
                 # User is admin - activate bot and send settings to private chat
                 bot.send_message(
                     message.chat.id,
-                    "تم تفعيل البوت! اذهب إلى الخاص (@{}) لتعديل الإعدادات".format(bot_username),
+                    f"تم تفعيل البوت! اذهب إلى الخاص (@{bot_username}) لتعديل الإعدادات",
                     parse_mode="Markdown"
                 )
                 
@@ -786,7 +785,7 @@ def cmd_start(message: types.Message):
                     logger.warning(f"Could not send settings to user {message.from_user.id}: {e}")
                     bot.send_message(
                         message.chat.id,
-                        "⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{}) لاستلام لوحة الإعدادات.".format(bot_username),
+                        f"⚠️ يرجى بدء محادثة خاصة مع البوت أولاً (@{bot_username}) لاستلام لوحة الإعدادات.",
                         parse_mode="Markdown"
                     )
             else:
@@ -898,9 +897,6 @@ def callback_open_settings(call: types.CallbackQuery):
     Displays the full settings panel with all available options.
     """
     try:
-        # Answer the callback query first to remove loading state
-        bot.answer_callback_query(call.id, "جاري تحميل الإعدادات...")
-        
         # Check if user is admin in any group
         is_admin = is_user_admin_in_any_group(call.from_user.id)
         
@@ -911,6 +907,9 @@ def callback_open_settings(call: types.CallbackQuery):
                 show_alert=True
             )
             return
+        
+        # Answer the callback query
+        bot.answer_callback_query(call.id, "تم تحميل الإعدادات")
         
         # Build settings display message
         settings_text = (
@@ -939,11 +938,16 @@ def callback_open_settings(call: types.CallbackQuery):
         
     except Exception as e:
         logger.error(f"Error in callback_open_settings: {e}", exc_info=True)
-        bot.answer_callback_query(
-            call.id,
-            "حدث خطأ أثناء تحميل الإعدادات",
-            show_alert=True
-        )
+        # Only answer callback if not already answered
+        try:
+            bot.answer_callback_query(
+                call.id,
+                "حدث خطأ أثناء تحميل الإعدادات",
+                show_alert=True
+            )
+        except Exception:
+            # Callback already answered
+            pass
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message: types.Message):
