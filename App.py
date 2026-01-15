@@ -539,25 +539,6 @@ def get_ramadan_settings(chat_id: int) -> dict:
         logger.error(f"Error getting ramadan settings: {e}", exc_info=True)
         conn.close()
         raise
-    c = conn.cursor()
-    c.execute("SELECT * FROM ramadan_settings WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
-    
-    if row is None:
-        c.execute("INSERT INTO ramadan_settings (chat_id) VALUES (?)", (chat_id,))
-        conn.commit()
-        conn.close()
-        return get_ramadan_settings(chat_id)
-    
-    conn.close()
-    return {
-        "chat_id": row[0],
-        "ramadan_enabled": bool(row[1]),
-        "laylat_alqadr_enabled": bool(row[2]),
-        "last_ten_days_enabled": bool(row[3]),
-        "iftar_dua_enabled": bool(row[4]),
-        "media_type": row[5]
-    }
 
 def update_ramadan_setting(chat_id: int, key: str, value):
     """Update a specific Ramadan setting."""
@@ -1323,9 +1304,11 @@ def send_fasting_reminder(chat_id: int, reminder_type: str):
         
         # Prepare reminder message
         if reminder_type == "monday_thursday":
-            # Determine which day
+            # Determine which day - reminder is sent day before fasting
+            # Sunday (6) -> tomorrow is Monday (0)
+            # Wednesday (2) -> tomorrow is Thursday (3)
             today = datetime.now(TIMEZONE)
-            day_name = "الإثنين" if today.weekday() == 0 else "الخميس"
+            day_name = "الإثنين" if today.weekday() == 6 else "الخميس"
             
             message = (
                 f"🌙 *تذكير بصيام {day_name}*\n\n"
@@ -1669,7 +1652,7 @@ def schedule_chat_jobs(chat_id: int):
                 )
                 logger.info(f"Scheduled Monday/Thursday fasting reminders at {fasting_settings['reminder_time']} for chat {chat_id}")
             except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid reminder time for {chat_id}: {e}")
+                logger.error(f"Invalid reminder_time format '{fasting_settings.get('reminder_time', 'unknown')}' for chat {chat_id}: {e}")
         
         # Note: Arafah reminder would need Islamic calendar integration
         # For now, we'll add a placeholder that can be triggered manually or via Islamic date check
