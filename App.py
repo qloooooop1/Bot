@@ -9,6 +9,7 @@ import telebot
 import sqlite3
 import random
 import logging
+import threading
 from datetime import datetime, time as dt_time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -42,9 +43,17 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # المنطقة الزمنية (توقيت الرياض)
 TIMEZONE = pytz.timezone('Asia/Riyadh')
 
-# قاعدة البيانات
+# قاعدة البيانات مع قفل للسلامة في البيئات متعددة الخيوط
 conn = sqlite3.connect('adhkar_bot.db', check_same_thread=False)
 cursor = conn.cursor()
+db_lock = threading.Lock()
+
+def with_db_lock(func):
+    """Decorator to ensure database operations are thread-safe"""
+    def wrapper(*args, **kwargs):
+        with db_lock:
+            return func(*args, **kwargs)
+    return wrapper
 
 # إنشاء الجداول
 def init_database():
@@ -192,16 +201,17 @@ def add_default_content():
 
 def get_group_settings(chat_id):
     """الحصول على إعدادات المجموعة أو إنشاء إعدادات افتراضية"""
-    cursor.execute('SELECT * FROM group_settings WHERE chat_id = ?', (chat_id,))
-    settings = cursor.fetchone()
-    
-    if not settings:
-        cursor.execute('''INSERT INTO group_settings (chat_id) VALUES (?)''', (chat_id,))
-        conn.commit()
+    with db_lock:
         cursor.execute('SELECT * FROM group_settings WHERE chat_id = ?', (chat_id,))
         settings = cursor.fetchone()
-    
-    return settings
+        
+        if not settings:
+            cursor.execute('''INSERT INTO group_settings (chat_id) VALUES (?)''', (chat_id,))
+            conn.commit()
+            cursor.execute('SELECT * FROM group_settings WHERE chat_id = ?', (chat_id,))
+            settings = cursor.fetchone()
+        
+        return settings
 
 def is_admin(chat_id, user_id):
     """التحقق من أن المستخدم مشرف في المجموعة"""
@@ -552,7 +562,7 @@ def send_random_content():
     
     # Only send if we have content
     if not message:
-        logger.warning("No random content available to send")
+        logger.warning(f"No random content available to send (type: {content_type})")
         return
     
     for (chat_id,) in groups:
