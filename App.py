@@ -828,7 +828,7 @@ def echo_all(message: types.Message):
     """
     try:
         # Only respond in private chats to avoid spam in groups
-        if message.chat.type == "private":
+        if message.chat.type == "private" and message.text:
             response = f"قلت: {message.text}"
             bot.reply_to(message, response)
             logger.info(f"Echo handler triggered for message from {message.from_user.id}")
@@ -928,7 +928,11 @@ def telegram_webhook():
             update = telebot.types.Update.de_json(json_string)
             
             if update and update.message:
-                logger.info(f"Processing message: {update.message.text}")
+                msg_text = getattr(update.message, 'text', None)
+                if msg_text:
+                    logger.info(f"Processing message: {msg_text}")
+                else:
+                    logger.info(f"Processing non-text message from {update.message.chat.id}")
             elif update:
                 logger.info(f"Processing update type: {update.update_id}")
             
