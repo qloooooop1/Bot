@@ -534,6 +534,7 @@ def send_random_content():
     # اختيار نوع المحتوى عشوائياً
     content_type = random.choice(['dua', 'quran'])
     
+    message = None
     if content_type == 'dua':
         cursor.execute('SELECT content FROM random_dua ORDER BY RANDOM() LIMIT 1')
         result = cursor.fetchone()
@@ -548,6 +549,11 @@ def send_random_content():
             header = "📖 *من القرآن الكريم* 📖\n\n"
             footer = f"\n\n﴿ سورة {surah} - آية {verse} ﴾"
             message = header + content + footer
+    
+    # Only send if we have content
+    if not message:
+        logger.warning("No random content available to send")
+        return
     
     for (chat_id,) in groups:
         try:
