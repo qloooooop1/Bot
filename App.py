@@ -490,8 +490,9 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
                             first_name=member.user.first_name,
                             last_name=member.user.last_name
                         )
-                    except Exception:
-                        pass  # Don't fail the check if save fails
+                    except Exception as e:
+                        # Don't fail the check if save fails, but log it
+                        logger.debug(f"Could not save admin info for user {user_id} in chat {chat_id}: {e}")
                     return True
             except Exception as e:
                 # User might not be in this group, or bot might have been removed
@@ -516,15 +517,16 @@ def get_chat_settings(chat_id: int) -> dict:
         row = c.fetchone()
         
         if row is None:
+            # Create default settings for new chat
             c.execute(f"INSERT INTO chat_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_chat_settings(chat_id)
-        
-        conn.close()
+            
+            # Fetch the newly created row instead of recursion
+            c.execute(f"SELECT * FROM chat_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
         
         # Handle both old and new schema for backward compatibility
-        return {
+        result = {
             "chat_id": row[0],
             "is_enabled": bool(row[1]),
             "morning_azkar": bool(row[2]),
@@ -542,10 +544,13 @@ def get_chat_settings(chat_id: int) -> dict:
             "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
             "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting chat settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        if conn:
+            conn.close()
 
 def update_chat_setting(chat_id: int, key: str, value):
     """Update chat setting in database (PostgreSQL preferred, SQLite fallback)."""
@@ -576,12 +581,18 @@ def update_chat_setting(chat_id: int, key: str, value):
         placeholder = "%s" if is_postgres else "?"
         c.execute(f"UPDATE chat_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
         conn.commit()
-        conn.close()
         logger.info(f"Updated {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating chat setting: {e}", exc_info=True)
-        conn.close()
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
+    finally:
+        if conn:
+            conn.close()
 
 # ────────────────────────────────────────────────
 #               Diverse Azkar Settings Functions
@@ -597,13 +608,15 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
         row = c.fetchone()
         
         if row is None:
+            # Create default settings for new chat
             c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_diverse_azkar_settings(chat_id)
+            
+            # Fetch the newly created row instead of recursion
+            c.execute(f"SELECT * FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
         
-        conn.close()
-        return {
+        result = {
             "chat_id": row[0],
             "enabled": bool(row[1]),
             "interval_minutes": row[2],
@@ -614,10 +627,13 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
             "enable_pdf": bool(row[7]) if len(row) > 7 else True,
             "enable_text": bool(row[8]) if len(row) > 8 else True
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        if conn:
+            conn.close()
 
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
@@ -647,12 +663,18 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
         # Safe to use f-string here as key is validated against whitelist above
         c.execute(f"UPDATE diverse_azkar_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
         conn.commit()
-        conn.close()
         logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating diverse azkar setting: {e}", exc_info=True)
-        conn.close()
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
+    finally:
+        if conn:
+            conn.close()
 
 # ────────────────────────────────────────────────
 #               Ramadan Settings Functions
@@ -668,13 +690,15 @@ def get_ramadan_settings(chat_id: int) -> dict:
         row = c.fetchone()
         
         if row is None:
+            # Create default settings for new chat
             c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_ramadan_settings(chat_id)
+            
+            # Fetch the newly created row instead of recursion
+            c.execute(f"SELECT * FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
         
-        conn.close()
-        return {
+        result = {
             "chat_id": row[0],
             "ramadan_enabled": bool(row[1]),
             "laylat_alqadr_enabled": bool(row[2]),
@@ -682,10 +706,13 @@ def get_ramadan_settings(chat_id: int) -> dict:
             "iftar_dua_enabled": bool(row[4]),
             "media_type": row[5]
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting ramadan settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        if conn:
+            conn.close()
 
 def update_ramadan_setting(chat_id: int, key: str, value):
     """Update a specific Ramadan setting."""
@@ -720,9 +747,15 @@ def update_ramadan_setting(chat_id: int, key: str, value):
         logger.info(f"Updated ramadan {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating ramadan setting: {e}", exc_info=True)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 # ────────────────────────────────────────────────
 #               Hajj & Eid Settings Functions
@@ -738,10 +771,13 @@ def get_hajj_eid_settings(chat_id: int) -> dict:
         row = c.fetchone()
         
         if row is None:
+            # Create default settings for new chat
             c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_hajj_eid_settings(chat_id)
+            
+            # Fetch the newly created row instead of recursion
+            c.execute(f"SELECT * FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
         
         result = {
             "chat_id": row[0],
@@ -757,7 +793,8 @@ def get_hajj_eid_settings(chat_id: int) -> dict:
         logger.error(f"Error getting hajj_eid settings: {e}", exc_info=True)
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def update_hajj_eid_setting(chat_id: int, key: str, value):
     """Update a specific Hajj/Eid setting."""
@@ -792,9 +829,15 @@ def update_hajj_eid_setting(chat_id: int, key: str, value):
         logger.info(f"Updated hajj_eid {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating hajj_eid setting: {e}", exc_info=True)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 # ────────────────────────────────────────────────
 #               Fasting Reminders Settings Functions
@@ -810,10 +853,13 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
         row = c.fetchone()
         
         if row is None:
+            # Create default settings for new chat
             c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_fasting_reminders_settings(chat_id)
+            
+            # Fetch the newly created row instead of recursion
+            c.execute(f"SELECT * FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
         
         result = {
             "chat_id": row[0],
@@ -821,12 +867,13 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
             "arafah_reminder_enabled": bool(row[2]),
             "reminder_time": row[3]
         }
-        conn.close()
         return result
     except Exception as e:
         logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        if conn:
+            conn.close()
 
 def update_fasting_reminder_setting(chat_id: int, key: str, value):
     """Update a specific fasting reminder setting."""
@@ -860,9 +907,15 @@ def update_fasting_reminder_setting(chat_id: int, key: str, value):
         logger.info(f"Updated fasting reminder {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating fasting reminder setting: {e}", exc_info=True)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 # ────────────────────────────────────────────────
 #               Admin Management Functions
@@ -2125,8 +2178,7 @@ def schedule_all_chats():
         conn, c, is_postgres = get_db_connection()
         
         try:
-            placeholder = "%s" if is_postgres else "?"
-            c.execute(f"SELECT chat_id FROM chat_settings WHERE is_enabled = 1")
+            c.execute("SELECT chat_id FROM chat_settings WHERE is_enabled = 1")
             chat_ids = [row[0] for row in c.fetchall()]
             
             logger.info(f"Scheduling jobs for {len(chat_ids)} enabled chats...")
@@ -5229,6 +5281,12 @@ def callback_toggle_ramadan(call: types.CallbackQuery):
         # Parse callback data to extract key and possibly chat_id
         parts = call.data.replace("toggle_ramadan_", "").split("_")
         
+        # Validate parts is not empty
+        if not parts or not parts[0]:
+            logger.error(f"Invalid callback data format: {call.data}")
+            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
+        
         # Check if chat_id is in the callback data (private chat with group context)
         chat_id = None
         setting_key = None
@@ -5415,6 +5473,12 @@ def callback_toggle_hajj_eid(call: types.CallbackQuery):
     try:
         # Parse callback data to extract key and possibly chat_id
         parts = call.data.replace("toggle_hajj_eid_", "").split("_")
+        
+        # Validate parts is not empty
+        if not parts or not parts[0]:
+            logger.error(f"Invalid callback data format: {call.data}")
+            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
         
         # Check if chat_id is in the callback data (private chat with group context)
         chat_id = None
@@ -5615,6 +5679,12 @@ def callback_toggle_fasting(call: types.CallbackQuery):
     try:
         # Parse callback data to extract key and possibly chat_id
         parts = call.data.replace("toggle_fasting_", "").split("_")
+        
+        # Validate parts is not empty
+        if not parts or not parts[0]:
+            logger.error(f"Invalid callback data format: {call.data}")
+            bot.answer_callback_query(call.id, "❌ خطأ في البيانات")
+            return
         
         # Check if chat_id is in the callback data (private chat with group context)
         chat_id = None
