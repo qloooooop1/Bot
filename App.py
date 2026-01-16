@@ -43,6 +43,23 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # ────────────────────────────────────────────────
+#               Constants
+# ────────────────────────────────────────────────
+
+# Message sending delays (in seconds)
+MESSAGE_DELAY_SECONDS = 0.05  # Small delay between messages to avoid flood limits
+FLOOD_WAIT_DELAY_SECONDS = 1  # Delay after FloodWait error before continuing
+
+# Error detection keywords
+ERROR_BLOCKED = "blocked"
+ERROR_KICKED = "kicked"
+ERROR_FLOOD = "flood"
+ERROR_RETRY_AFTER = "retry after"
+ERROR_CHAT_NOT_FOUND = "chat not found"
+ERROR_FORBIDDEN = "forbidden"
+ERROR_DEACTIVATED = "deactivated"
+
+# ────────────────────────────────────────────────
 #               Configuration
 # ────────────────────────────────────────────────
 
@@ -416,6 +433,46 @@ def get_db_connection():
 # ────────────────────────────────────────────────
 #               Helper Functions
 # ────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────
+#               Helper Functions
+# ────────────────────────────────────────────────
+
+def validate_time_format(time_str: str) -> tuple:
+    """
+    Validate time string format and return hour and minute.
+    
+    Args:
+        time_str (str): Time string in HH:MM format
+        
+    Returns:
+        tuple: (hour, minute, is_valid, error_message)
+               If valid: (h, m, True, None)
+               If invalid: (None, None, False, error_message)
+    """
+    if not time_str:
+        return (None, None, False, "Empty time string")
+    
+    if ':' not in time_str:
+        return (None, None, False, "Missing ':' separator")
+    
+    parts = time_str.split(":")
+    if len(parts) != 2:
+        return (None, None, False, f"Invalid format: expected HH:MM, got '{time_str}'")
+    
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+    except ValueError:
+        return (None, None, False, f"Non-numeric values in '{time_str}'")
+    
+    if not (0 <= h <= 23):
+        return (None, None, False, f"Invalid hour: {h} (must be 0-23)")
+    
+    if not (0 <= m <= 59):
+        return (None, None, False, f"Invalid minute: {m} (must be 0-59)")
+    
+    return (h, m, True, None)
 
 def is_user_admin_in_any_group(user_id: int) -> bool:
     """
@@ -1571,23 +1628,36 @@ def get_random_media_by_category(category: str, media_type: str = "all"):
 def send_diverse_azkar(chat_id: int):
     """
     Send a random diverse azkar to a chat with media format preferences.
+    Includes comprehensive error handling and logging.
     
     Args:
         chat_id (int): Chat ID to send to
     """
+    # Get current time for logging
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
-        logger.info(f"send_diverse_azkar called for chat {chat_id}")
+        logger.info(f"[{current_time}] Attempting to send diverse azkar to chat {chat_id}")
+        
+        # Get diverse azkar settings
         settings = get_diverse_azkar_settings(chat_id)
         
         if not settings["enabled"]:
-            logger.info(f"Diverse azkar disabled for chat {chat_id}")
+            logger.info(f"[{current_time}] Skipped diverse azkar for chat {chat_id}: Feature disabled")
             return
         
-        logger.info(f"Diverse azkar enabled for chat {chat_id}, preparing to send")
+        # Verify chat is still enabled globally
+        chat_settings = get_chat_settings(chat_id)
+        if not chat_settings["is_enabled"]:
+            logger.info(f"[{current_time}] Skipped diverse azkar for chat {chat_id}: Chat disabled globally")
+            return
         
+        logger.info(f"[{current_time}] Diverse azkar enabled for chat {chat_id} (interval: {settings['interval_minutes']}min)")
+        
+        # Get random azkar message
         msg = get_random_diverse_azkar()
         if not msg:
-            logger.warning(f"No diverse azkar available for chat {chat_id}")
+            logger.warning(f"[{current_time}] ✗ No diverse azkar available for chat {chat_id}")
             return
         
         # Check media format preferences
@@ -1596,7 +1666,7 @@ def send_diverse_azkar(chat_id: int):
         enable_pdf = settings.get("enable_pdf", True)
         enable_text = settings.get("enable_text", True)
         
-        logger.info(f"Media preferences for chat {chat_id}: audio={enable_audio}, images={enable_images}, pdf={enable_pdf}, text={enable_text}")
+        logger.info(f"[{current_time}] Media preferences for chat {chat_id}: audio={enable_audio}, images={enable_images}, pdf={enable_pdf}, text={enable_text}")
         
         # Build list of allowed media types
         allowed_media_types = []
@@ -1609,28 +1679,94 @@ def send_diverse_azkar(chat_id: int):
         
         # Try to send with media if any media type is enabled
         sent = False
+        error_occurred = False
+        
         if allowed_media_types:
             # Try to send with random allowed media type
-            # Note: Could make this probability configurable in future if needed
             media_type = random.choice(allowed_media_types)
-            logger.info(f"Attempting to send diverse azkar with media type: {media_type}")
-            sent = send_media_with_caption(chat_id, msg, media_type)
+            logger.info(f"[{current_time}] Attempting to send diverse azkar with media type: {media_type}")
+            
+            try:
+                sent = send_media_with_caption(chat_id, msg, media_type)
+            except telebot.apihelper.ApiTelegramException as e:
+                error_description = str(e)
+                error_occurred = True
+                
+                # Handle specific error types
+                if "blocked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Bot blocked by user")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    return
+                    
+                elif "kicked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Bot kicked from chat")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    return
+                    
+                elif "flood" in error_description.lower() or "retry after" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: FloodWait - {error_description}")
+                    # Don't disable, just skip this send
+                    return
+                    
+                elif "chat not found" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Chat not found")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    return
+                    
+                elif "forbidden" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Forbidden/No permission")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    return
+                    
+                else:
+                    logger.error(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: {error_description}")
         
         # Fallback to text if media failed or text is preferred
-        if not sent and enable_text:
-            logger.info(f"Sending diverse azkar as text to chat {chat_id}")
-            bot.send_message(chat_id, msg, parse_mode="Markdown")
-            sent = True
+        if not sent and enable_text and not error_occurred:
+            logger.info(f"[{current_time}] Sending diverse azkar as text to chat {chat_id}")
+            
+            try:
+                bot.send_message(chat_id, msg, parse_mode="Markdown")
+                sent = True
+                logger.info(f"[{current_time}] ✓ Sent diverse azkar (text) to chat {chat_id}")
+                
+            except telebot.apihelper.ApiTelegramException as e:
+                error_description = str(e)
+                
+                if "blocked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Bot blocked by user")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    
+                elif "kicked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Bot kicked from chat")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    
+                elif "flood" in error_description.lower() or "retry after" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: FloodWait - {error_description}")
+                    
+                elif "chat not found" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Chat not found")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    
+                elif "forbidden" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: Forbidden/No permission")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    
+                else:
+                    logger.error(f"[{current_time}] ✗ Failed diverse azkar to chat {chat_id}: {error_description}")
         
         if sent:
             # Update last sent timestamp
             update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
-            logger.info(f"Successfully sent diverse azkar to chat {chat_id}")
+            logger.info(f"[{current_time}] ✓ Successfully sent diverse azkar to chat {chat_id}")
         else:
-            logger.warning(f"Failed to send diverse azkar to chat {chat_id} - all media types disabled")
+            if not enable_text and not allowed_media_types:
+                logger.warning(f"[{current_time}] ✗ Cannot send diverse azkar to chat {chat_id}: All media types disabled")
+            elif error_occurred:
+                logger.warning(f"[{current_time}] ✗ Failed to send diverse azkar to chat {chat_id}: Error occurred")
         
     except Exception as e:
-        logger.error(f"Error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error sending diverse azkar to chat {chat_id}: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Ramadan, Hajj, Eid Azkar Functions
@@ -1662,69 +1798,92 @@ def load_eid_azkar():
 
 def send_special_azkar(chat_id: int, azkar_type: str):
     """
-    Send special azkar (Ramadan, Hajj, Eid) to a chat.
+    Send special azkar (Ramadan, Hajj, Eid) to a chat with comprehensive error handling.
     
     Args:
         chat_id (int): Chat ID to send to
         azkar_type (str): Type of special azkar to send
     """
+    # Get current time for logging
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
+        logger.info(f"[{current_time}] Attempting to send {azkar_type} special azkar to chat {chat_id}")
+        
         messages = []
+        media_type = "images"  # Default
         settings = get_chat_settings(chat_id)
         
         if not settings["is_enabled"]:
+            logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Chat disabled")
             return
         
-        # Load appropriate azkar based on type
+        # Load appropriate azkar based on type and verify setting is enabled
         if azkar_type == "ramadan":
             ramadan_settings = get_ramadan_settings(chat_id)
-            if ramadan_settings["ramadan_enabled"]:
-                messages = load_ramadan_azkar()
-                media_type = ramadan_settings.get("media_type", "images")
+            if not ramadan_settings["ramadan_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Ramadan azkar disabled")
+                return
+            messages = load_ramadan_azkar()
+            media_type = ramadan_settings.get("media_type", "images")
         
         elif azkar_type == "laylat_alqadr":
             ramadan_settings = get_ramadan_settings(chat_id)
-            if ramadan_settings["laylat_alqadr_enabled"]:
-                messages = load_laylat_alqadr_azkar()
-                media_type = ramadan_settings.get("media_type", "images")
+            if not ramadan_settings["laylat_alqadr_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Laylat al-Qadr disabled")
+                return
+            messages = load_laylat_alqadr_azkar()
+            media_type = ramadan_settings.get("media_type", "images")
         
         elif azkar_type == "last_ten_days":
             ramadan_settings = get_ramadan_settings(chat_id)
-            if ramadan_settings["last_ten_days_enabled"]:
-                messages = load_last_ten_days_azkar()
-                media_type = ramadan_settings.get("media_type", "images")
+            if not ramadan_settings["last_ten_days_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Last ten days disabled")
+                return
+            messages = load_last_ten_days_azkar()
+            media_type = ramadan_settings.get("media_type", "images")
         
         elif azkar_type == "arafah":
             hajj_eid_settings = get_hajj_eid_settings(chat_id)
-            if hajj_eid_settings["arafah_day_enabled"]:
-                messages = load_arafah_azkar()
-                media_type = hajj_eid_settings.get("media_type", "images")
+            if not hajj_eid_settings["arafah_day_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Arafah day disabled")
+                return
+            messages = load_arafah_azkar()
+            media_type = hajj_eid_settings.get("media_type", "images")
         
         elif azkar_type == "hajj":
             hajj_eid_settings = get_hajj_eid_settings(chat_id)
-            if hajj_eid_settings["hajj_enabled"]:
-                messages = load_hajj_azkar()
-                media_type = hajj_eid_settings.get("media_type", "images")
+            if not hajj_eid_settings["hajj_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Hajj azkar disabled")
+                return
+            messages = load_hajj_azkar()
+            media_type = hajj_eid_settings.get("media_type", "images")
         
         elif azkar_type == "eid":
             hajj_eid_settings = get_hajj_eid_settings(chat_id)
-            if hajj_eid_settings["eid_day_enabled"]:
-                messages = load_eid_azkar()
-                media_type = hajj_eid_settings.get("media_type", "images")
+            if not hajj_eid_settings["eid_day_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Eid day disabled")
+                return
+            messages = load_eid_azkar()
+            media_type = hajj_eid_settings.get("media_type", "images")
         
         elif azkar_type == "eid_adha":
             hajj_eid_settings = get_hajj_eid_settings(chat_id)
-            if hajj_eid_settings["eid_adha_enabled"]:
-                messages = load_eid_azkar()  # Can use same eid azkar or create separate
-                media_type = hajj_eid_settings.get("media_type", "images")
+            if not hajj_eid_settings["eid_adha_enabled"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Eid al-Adha disabled")
+                return
+            messages = load_eid_azkar()  # Can use same eid azkar or create separate
+            media_type = hajj_eid_settings.get("media_type", "images")
         
         else:
-            logger.warning(f"Unknown special azkar type: {azkar_type}")
+            logger.warning(f"[{current_time}] ✗ Unknown special azkar type: {azkar_type}")
             return
         
         if not messages:
-            logger.warning(f"No messages loaded for {azkar_type}")
+            logger.warning(f"[{current_time}] ✗ No messages loaded for {azkar_type}")
             return
+        
+        logger.info(f"[{current_time}] Sending {len(messages)} {azkar_type} messages to chat {chat_id}")
         
         # Send messages
         for idx, msg in enumerate(messages):
@@ -1760,17 +1919,47 @@ def send_special_azkar(chat_id: int, azkar_type: str):
                 else:
                     bot.send_message(chat_id, msg, parse_mode="Markdown")
                     
-                logger.info(f"Sent {azkar_type} message to {chat_id}")
+                logger.info(f"[{current_time}] ✓ Sent {azkar_type} message {idx+1}/{len(messages)} to chat {chat_id}")
+                
+                # Small delay between messages
+                if idx < len(messages) - 1:
+                    time.sleep(0.05)
                 
             except telebot.apihelper.ApiTelegramException as e:
-                if "blocked" in str(e).lower() or "kicked" in str(e).lower():
-                    logger.warning(f"Bot blocked/kicked from {chat_id}")
+                error_description = str(e)
+                
+                # Handle specific error types
+                if "blocked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Bot blocked by user")
                     update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
+                elif "kicked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Bot kicked from chat")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
+                elif "flood" in error_description.lower() or "retry after" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: FloodWait - {error_description}")
+                    time.sleep(1)  # Wait before continuing
+                    
+                elif "chat not found" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Chat not found")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
+                elif "forbidden" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Forbidden/No permission")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
                 else:
-                    logger.error(f"Failed sending {azkar_type} to {chat_id}: {e}")
+                    logger.error(f"[{current_time}] ✗ Failed {azkar_type} message {idx+1}/{len(messages)} to chat {chat_id}: {error_description}")
+        
+        logger.info(f"[{current_time}] Completed sending {azkar_type} to chat {chat_id}")
         
     except Exception as e:
-        logger.error(f"Error sending {azkar_type} azkar to chat {chat_id}: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error sending {azkar_type} azkar to chat {chat_id}: {e}", exc_info=True)
 
 def send_fasting_reminder(chat_id: int, reminder_type: str):
     """
@@ -1989,32 +2178,71 @@ SLEEP_MESSAGE = load_sleep_azkar() or (
 # ────────────────────────────────────────────────
 
 def send_azkar(chat_id: int, azkar_type: str):
+    """
+    Send scheduled azkar to a chat with comprehensive error handling and logging.
+    
+    Args:
+        chat_id (int): Target chat ID
+        azkar_type (str): Type of azkar (morning, evening, friday_kahf, friday_dua, sleep)
+    """
+    # Get current time for logging
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
+        logger.info(f"[{current_time}] Attempting to send {azkar_type} azkar to chat {chat_id}")
+        
         settings = get_chat_settings(chat_id)
         if not settings["is_enabled"]:
+            logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Chat disabled")
             return
 
         messages = []
         send_with_media = False
 
-        if azkar_type == "morning" and settings["morning_azkar"]:
+        # Select messages based on azkar type and verify setting is enabled
+        if azkar_type == "morning":
+            if not settings["morning_azkar"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Morning azkar disabled")
+                return
             messages = MORNING_AZKAR
             send_with_media = settings.get("send_media_with_morning", False)
-        elif azkar_type == "evening" and settings["evening_azkar"]:
+            
+        elif azkar_type == "evening":
+            if not settings["evening_azkar"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Evening azkar disabled")
+                return
             messages = EVENING_AZKAR
             send_with_media = settings.get("send_media_with_evening", False)
-        elif azkar_type == "friday_kahf" and settings["friday_sura"]:
+            
+        elif azkar_type == "friday_kahf":
+            if not settings["friday_sura"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Friday sura disabled")
+                return
             messages = [KAHF_REMINDER]
             send_with_media = settings.get("send_media_with_friday", False)
-        elif azkar_type == "friday_dua" and settings["friday_dua"]:
+            
+        elif azkar_type == "friday_dua":
+            if not settings["friday_dua"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Friday dua disabled")
+                return
             messages = FRIDAY_DUA
             send_with_media = settings.get("send_media_with_friday", False)
-        elif azkar_type == "sleep" and settings["sleep_message"]:
+            
+        elif azkar_type == "sleep":
+            if not settings["sleep_message"]:
+                logger.info(f"[{current_time}] Skipped {azkar_type} for chat {chat_id}: Sleep message disabled")
+                return
             messages = [SLEEP_MESSAGE]
+
+        if not messages:
+            logger.warning(f"[{current_time}] No messages available for {azkar_type}, chat {chat_id}")
+            return
 
         # Check if media is enabled globally
         media_enabled = settings.get("media_enabled", False) and send_with_media
         media_type = settings.get("media_type", "images")
+
+        logger.info(f"[{current_time}] Sending {len(messages)} {azkar_type} messages to chat {chat_id} (media: {media_enabled})")
 
         for idx, msg in enumerate(messages):
             try:
@@ -2023,16 +2251,58 @@ def send_azkar(chat_id: int, azkar_type: str):
                     send_media_with_caption(chat_id, msg, media_type)
                 else:
                     bot.send_message(chat_id, msg, parse_mode="Markdown")
-                logger.info(f"Sent {azkar_type} message to {chat_id}")
+                logger.info(f"[{current_time}] ✓ Sent {azkar_type} message {idx+1}/{len(messages)} to chat {chat_id}")
+                
+                # Small delay between messages to avoid flood limits
+                if idx < len(messages) - 1:
+                    time.sleep(0.05)
+                    
             except telebot.apihelper.ApiTelegramException as e:
-                if "blocked" in str(e).lower() or "kicked" in str(e).lower():
-                    logger.warning(f"Bot blocked/kicked from {chat_id}")
+                error_description = str(e)
+                
+                # Handle specific error types with detailed logging
+                if "blocked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Bot blocked by user")
                     update_chat_setting(chat_id, "is_enabled", 0)
+                    break  # Stop sending remaining messages
+                    
+                elif "kicked" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Bot kicked from chat")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break  # Stop sending remaining messages
+                    
+                elif "flood" in error_description.lower() or "retry after" in error_description.lower():
+                    # Extract retry time if available
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: FloodWait - {error_description}")
+                    # Continue with remaining messages after a longer delay
+                    time.sleep(1)
+                    
+                elif "chat not found" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Chat not found")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
+                elif "forbidden" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: Forbidden/No permission")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
+                elif "deactivated" in error_description.lower():
+                    logger.warning(f"[{current_time}] ✗ Failed {azkar_type} to chat {chat_id}: User/chat deactivated")
+                    update_chat_setting(chat_id, "is_enabled", 0)
+                    break
+                    
                 else:
-                    logger.error(f"Failed sending to {chat_id}: {e}")
+                    logger.error(f"[{current_time}] ✗ Failed {azkar_type} message {idx+1}/{len(messages)} to chat {chat_id}: {error_description}")
+                    # Continue with remaining messages for unknown errors
+                    
+            except Exception as e:
+                logger.error(f"[{current_time}] ✗ Unexpected error sending {azkar_type} message {idx+1}/{len(messages)} to chat {chat_id}: {e}", exc_info=True)
+
+        logger.info(f"[{current_time}] Completed sending {azkar_type} to chat {chat_id}")
 
     except Exception as e:
-        logger.error(f"Error in send_azkar ({azkar_type}) for {chat_id}: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error in send_azkar ({azkar_type}) for chat {chat_id}: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Scheduling
@@ -2041,22 +2311,45 @@ def send_azkar(chat_id: int, azkar_type: str):
 def schedule_chat_jobs(chat_id: int):
     """
     Schedule all azkar jobs for a specific chat based on its settings.
+    Includes comprehensive validation and logging for each scheduled job.
     
     Args:
         chat_id (int): The Telegram chat ID to schedule jobs for
     """
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
+        logger.info(f"[{current_time}] Scheduling jobs for chat {chat_id}")
+        
         settings = get_chat_settings(chat_id)
+        
+        # Validate that chat is enabled
+        if not settings["is_enabled"]:
+            logger.info(f"[{current_time}] Chat {chat_id} is disabled, clearing all scheduled jobs")
+            # Remove all jobs for this chat
+            for job in scheduler.get_jobs():
+                if str(chat_id) in job.id:
+                    job.remove()
+            return
 
-        # Remove previous jobs
+        # Remove previous jobs to avoid duplicates
+        jobs_removed = 0
         for job in scheduler.get_jobs():
             if str(chat_id) in job.id:
                 job.remove()
+                jobs_removed += 1
+        
+        if jobs_removed > 0:
+            logger.info(f"[{current_time}] Removed {jobs_removed} existing jobs for chat {chat_id}")
 
-        # Morning Azkar
+        jobs_scheduled = 0
+        
+        # Morning Azkar - scheduled based on user-defined time
         if settings["morning_azkar"]:
-            try:
-                h, m = map(int, settings["morning_time"].split(":"))
+            morning_time = settings["morning_time"]
+            h, m, is_valid, error_msg = validate_time_format(morning_time)
+            
+            if is_valid:
                 scheduler.add_job(
                     send_azkar,
                     CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
@@ -2064,13 +2357,17 @@ def schedule_chat_jobs(chat_id: int):
                     id=f"morning_{chat_id}",
                     replace_existing=True
                 )
-            except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid morning time for {chat_id}: {e}")
+                jobs_scheduled += 1
+                logger.info(f"[{current_time}] ✓ Scheduled morning azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
+            else:
+                logger.error(f"[{current_time}] ✗ Invalid morning_time for chat {chat_id}: {error_msg}")
 
-        # Evening Azkar
+        # Evening Azkar - scheduled based on user-defined time
         if settings["evening_azkar"]:
-            try:
-                h, m = map(int, settings["evening_time"].split(":"))
+            evening_time = settings["evening_time"]
+            h, m, is_valid, error_msg = validate_time_format(evening_time)
+            
+            if is_valid:
                 scheduler.add_job(
                     send_azkar,
                     CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
@@ -2078,10 +2375,12 @@ def schedule_chat_jobs(chat_id: int):
                     id=f"evening_{chat_id}",
                     replace_existing=True
                 )
-            except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid evening time for {chat_id}: {e}")
+                jobs_scheduled += 1
+                logger.info(f"[{current_time}] ✓ Scheduled evening azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
+            else:
+                logger.error(f"[{current_time}] ✗ Invalid evening_time for chat {chat_id}: {error_msg}")
 
-        # Friday Kahf reminder
+        # Friday Kahf reminder - fixed time (Friday 9:00 AM)
         if settings["friday_sura"]:
             scheduler.add_job(
                 send_azkar,
@@ -2090,8 +2389,10 @@ def schedule_chat_jobs(chat_id: int):
                 id=f"kahf_{chat_id}",
                 replace_existing=True
             )
+            jobs_scheduled += 1
+            logger.info(f"[{current_time}] ✓ Scheduled Friday Kahf for chat {chat_id} at Fri 09:00 {TIMEZONE}")
 
-        # Friday Dua
+        # Friday Dua - fixed time (Friday 10:00 AM)
         if settings["friday_dua"]:
             scheduler.add_job(
                 send_azkar,
@@ -2100,47 +2401,65 @@ def schedule_chat_jobs(chat_id: int):
                 id=f"friday_dua_{chat_id}",
                 replace_existing=True
             )
+            jobs_scheduled += 1
+            logger.info(f"[{current_time}] ✓ Scheduled Friday Dua for chat {chat_id} at Fri 10:00 {TIMEZONE}")
 
-        # Sleep message
+        # Sleep message - scheduled based on user-defined time
         if settings["sleep_message"]:
             try:
-                h, m = map(int, settings["sleep_time"].split(":"))
-                scheduler.add_job(
-                    send_azkar,
-                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                    args=[chat_id, "sleep"],
-                    id=f"sleep_{chat_id}",
-                    replace_existing=True
-                )
+                sleep_time = settings["sleep_time"]
+                # Validate time format
+                if not sleep_time or ':' not in sleep_time:
+                    logger.error(f"[{current_time}] ✗ Invalid sleep_time format for chat {chat_id}: '{sleep_time}'")
+                else:
+                    h, m = map(int, sleep_time.split(":"))
+                    # Validate hour and minute ranges
+                    if not (0 <= h <= 23 and 0 <= m <= 59):
+                        logger.error(f"[{current_time}] ✗ Invalid sleep_time values for chat {chat_id}: {h}:{m}")
+                    else:
+                        scheduler.add_job(
+                            send_azkar,
+                            CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                            args=[chat_id, "sleep"],
+                            id=f"sleep_{chat_id}",
+                            replace_existing=True
+                        )
+                        jobs_scheduled += 1
+                        logger.info(f"[{current_time}] ✓ Scheduled sleep message for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
             except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid sleep time for {chat_id}: {e}")
+                logger.error(f"[{current_time}] ✗ Error scheduling sleep message for chat {chat_id}: {e}")
         
-        # Diverse Azkar (interval-based)
+        # Diverse Azkar (interval-based) - uses interval_minutes from DB
         diverse_settings = get_diverse_azkar_settings(chat_id)
-        logger.info(f"Diverse azkar settings for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
+        logger.info(f"[{current_time}] Diverse azkar settings for chat {chat_id}: enabled={diverse_settings['enabled']}, interval_minutes={diverse_settings['interval_minutes']}")
         
-        if diverse_settings["enabled"] and diverse_settings["interval_minutes"] > 0:
-            # Remove any existing diverse azkar job first
-            for job in scheduler.get_jobs():
-                if job.id == f"diverse_azkar_{chat_id}":
-                    job.remove()
-                    logger.info(f"Removed existing diverse azkar job for chat {chat_id}")
+        if diverse_settings["enabled"]:
+            interval_min = diverse_settings.get("interval_minutes", 60)
             
-            # Add new job
-            # Note: next_run_time set to now means the job runs once immediately,
-            # then continues on the interval schedule. This helps test that diverse azkar is working.
-            job = scheduler.add_job(
-                send_diverse_azkar,
-                'interval',
-                minutes=diverse_settings["interval_minutes"],
-                args=[chat_id],
-                id=f"diverse_azkar_{chat_id}",
-                replace_existing=True,
-                next_run_time=datetime.now(TIMEZONE)  # Run once immediately, then on interval
-            )
-            logger.info(f"✓ Scheduled diverse azkar every {diverse_settings['interval_minutes']} minutes for chat {chat_id}, next run: {job.next_run_time}")
+            # Validate interval
+            if interval_min <= 0:
+                logger.error(f"[{current_time}] ✗ Invalid interval_minutes for chat {chat_id}: {interval_min} (must be > 0)")
+            else:
+                # Remove any existing diverse azkar job first
+                for job in scheduler.get_jobs():
+                    if job.id == f"diverse_azkar_{chat_id}":
+                        job.remove()
+                        logger.info(f"[{current_time}] Removed existing diverse azkar job for chat {chat_id}")
+                
+                # Add new job with interval-based trigger
+                job = scheduler.add_job(
+                    send_diverse_azkar,
+                    'interval',
+                    minutes=interval_min,
+                    args=[chat_id],
+                    id=f"diverse_azkar_{chat_id}",
+                    replace_existing=True,
+                    next_run_time=datetime.now(TIMEZONE)  # Run once immediately, then on interval
+                )
+                jobs_scheduled += 1
+                logger.info(f"[{current_time}] ✓ Scheduled diverse azkar every {interval_min} minutes for chat {chat_id}, next run: {job.next_run_time}")
         else:
-            logger.info(f"Diverse azkar not scheduled for chat {chat_id}: enabled={diverse_settings['enabled']}, interval={diverse_settings['interval_minutes']}")
+            logger.info(f"[{current_time}] Diverse azkar not scheduled for chat {chat_id}: disabled")
         
         # Fasting Reminders
         fasting_settings = get_fasting_reminders_settings(chat_id)
@@ -2148,32 +2467,40 @@ def schedule_chat_jobs(chat_id: int):
         # Monday/Thursday fasting reminders
         if fasting_settings["monday_thursday_enabled"]:
             try:
-                h, m = map(int, fasting_settings["reminder_time"].split(":"))
-                # Schedule for Sunday (day before Monday) and Wednesday (day before Thursday)
-                scheduler.add_job(
-                    send_fasting_reminder,
-                    CronTrigger(day_of_week="sun", hour=h, minute=m, timezone=TIMEZONE),
-                    args=[chat_id, "monday_thursday"],
-                    id=f"monday_reminder_{chat_id}",
-                    replace_existing=True
-                )
-                scheduler.add_job(
-                    send_fasting_reminder,
-                    CronTrigger(day_of_week="wed", hour=h, minute=m, timezone=TIMEZONE),
-                    args=[chat_id, "monday_thursday"],
-                    id=f"thursday_reminder_{chat_id}",
-                    replace_existing=True
-                )
-                logger.info(f"Scheduled Monday/Thursday fasting reminders at {fasting_settings['reminder_time']} for chat {chat_id}")
+                reminder_time = fasting_settings["reminder_time"]
+                # Validate time format
+                if not reminder_time or ':' not in reminder_time:
+                    logger.error(f"[{current_time}] ✗ Invalid reminder_time format for chat {chat_id}: '{reminder_time}'")
+                else:
+                    h, m = map(int, reminder_time.split(":"))
+                    # Validate hour and minute ranges
+                    if not (0 <= h <= 23 and 0 <= m <= 59):
+                        logger.error(f"[{current_time}] ✗ Invalid reminder_time values for chat {chat_id}: {h}:{m}")
+                    else:
+                        # Schedule for Sunday (day before Monday) and Wednesday (day before Thursday)
+                        scheduler.add_job(
+                            send_fasting_reminder,
+                            CronTrigger(day_of_week="sun", hour=h, minute=m, timezone=TIMEZONE),
+                            args=[chat_id, "monday_thursday"],
+                            id=f"monday_reminder_{chat_id}",
+                            replace_existing=True
+                        )
+                        scheduler.add_job(
+                            send_fasting_reminder,
+                            CronTrigger(day_of_week="wed", hour=h, minute=m, timezone=TIMEZONE),
+                            args=[chat_id, "monday_thursday"],
+                            id=f"thursday_reminder_{chat_id}",
+                            replace_existing=True
+                        )
+                        jobs_scheduled += 2
+                        logger.info(f"[{current_time}] ✓ Scheduled Monday/Thursday fasting reminders for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
             except (ValueError, AttributeError) as e:
-                logger.error(f"Invalid reminder_time format '{fasting_settings.get('reminder_time', 'unknown')}' for chat {chat_id}: {e}")
+                logger.error(f"[{current_time}] ✗ Error scheduling fasting reminders for chat {chat_id}: {e}")
         
-        # Note: Arafah reminder would need Islamic calendar integration
-        # For now, we'll add a placeholder that can be triggered manually or via Islamic date check
-
-        logger.info(f"Scheduled jobs for chat {chat_id}")
+        logger.info(f"[{current_time}] ✓ Successfully scheduled {jobs_scheduled} jobs for chat {chat_id}")
+        
     except Exception as e:
-        logger.error(f"Error scheduling jobs for chat {chat_id}: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error scheduling jobs for chat {chat_id}: {e}", exc_info=True)
 
 def schedule_all_chats():
     """
@@ -2210,25 +2537,38 @@ def schedule_all_chats():
 def my_chat_member_handler(update: types.ChatMemberUpdated):
     """
     Handle bot membership changes in chats.
-    Automatically enables/disables the bot based on admin status.
+    Automatically enables/disables the bot and schedules jobs based on admin status.
     Also syncs all group admins when bot is added as admin.
     """
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
         chat_id = update.chat.id
+        old_status = update.old_chat_member.status
         new_status = update.new_chat_member.status
         
-        logger.info(f"Bot status changed in chat {chat_id}: {new_status}")
+        logger.info(f"[{current_time}] Bot status changed in chat {chat_id}: {old_status} → {new_status}")
 
         if new_status in ["administrator", "creator"]:
+            # Bot promoted to admin - enable and schedule
+            logger.info(f"[{current_time}] ✓ Bot promoted to admin in chat {chat_id}, enabling and scheduling jobs")
+            
+            # Enable the chat
             update_chat_setting(chat_id, "is_enabled", 1)
+            
+            # Schedule all jobs for this chat
             schedule_chat_jobs(chat_id)
             
             # Sync all group admins when bot is added as admin
-            logger.info(f"Syncing admins for chat {chat_id} after bot was added as admin")
-            synced_count = sync_group_admins(chat_id)
-            if synced_count > 0:
-                logger.info(f"Successfully synced {synced_count} admins for chat {chat_id}")
+            logger.info(f"[{current_time}] Syncing admins for chat {chat_id} after bot was added as admin")
+            try:
+                synced_count = sync_group_admins(chat_id)
+                if synced_count > 0:
+                    logger.info(f"[{current_time}] ✓ Successfully synced {synced_count} admins for chat {chat_id}")
+            except Exception as e:
+                logger.error(f"[{current_time}] ✗ Error syncing admins for chat {chat_id}: {e}")
             
+            # Send activation message to the group
             try:
                 bot.send_message(
                     chat_id,
@@ -2237,17 +2577,28 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
                     "استخدم /start لتعديل الإعدادات",
                     parse_mode="Markdown"
                 )
-                logger.info(f"Bot activated in chat {chat_id}")
+                logger.info(f"[{current_time}] ✓ Activation message sent to chat {chat_id}")
             except Exception as e:
-                logger.error(f"Failed to send activation message to {chat_id}: {e}")
-        else:
+                logger.error(f"[{current_time}] ✗ Failed to send activation message to chat {chat_id}: {e}")
+                
+        elif old_status in ["administrator", "creator"] and new_status in ["member", "left", "kicked"]:
+            # Bot demoted or removed - disable and clear jobs
+            logger.info(f"[{current_time}] ✗ Bot demoted/removed from chat {chat_id}, disabling and clearing jobs")
+            
+            # Disable the chat
             update_chat_setting(chat_id, "is_enabled", 0)
+            
+            # Remove all scheduled jobs for this chat
+            jobs_removed = 0
             for job in scheduler.get_jobs():
                 if str(chat_id) in job.id:
                     job.remove()
-            logger.info(f"Bot deactivated in chat {chat_id}")
+                    jobs_removed += 1
+            
+            logger.info(f"[{current_time}] ✓ Removed {jobs_removed} scheduled jobs for chat {chat_id}")
+            
     except Exception as e:
-        logger.error(f"Error in my_chat_member_handler: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error in my_chat_member_handler: {e}", exc_info=True)
 
 @bot.message_handler(content_types=[
     'new_chat_members', 'left_chat_member', 'new_chat_title',
