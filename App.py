@@ -490,8 +490,9 @@ def is_user_admin_in_any_group(user_id: int) -> bool:
                             first_name=member.user.first_name,
                             last_name=member.user.last_name
                         )
-                    except Exception:
-                        pass  # Don't fail the check if save fails
+                    except Exception as e:
+                        # Don't fail the check if save fails, but log the error
+                        logger.warning(f"Failed to save admin info for user {user_id} in chat {chat_id}: {e}")
                     return True
             except Exception as e:
                 # User might not be in this group, or bot might have been removed
@@ -518,13 +519,19 @@ def get_chat_settings(chat_id: int) -> dict:
         if row is None:
             c.execute(f"INSERT INTO chat_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_chat_settings(chat_id)
-        
-        conn.close()
+            # Verify insertion was successful
+            if c.rowcount == 0:
+                logger.error(f"Failed to insert default settings for chat {chat_id}")
+                return None
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM chat_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted settings for chat {chat_id}")
+                return None
         
         # Handle both old and new schema for backward compatibility
-        return {
+        result = {
             "chat_id": row[0],
             "is_enabled": bool(row[1]),
             "morning_azkar": bool(row[2]),
@@ -542,10 +549,12 @@ def get_chat_settings(chat_id: int) -> dict:
             "send_media_with_evening": bool(row[14]) if len(row) > 14 else False,
             "send_media_with_friday": bool(row[15]) if len(row) > 15 else False,
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting chat settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 def update_chat_setting(chat_id: int, key: str, value):
     """Update chat setting in database (PostgreSQL preferred, SQLite fallback)."""
@@ -576,12 +585,12 @@ def update_chat_setting(chat_id: int, key: str, value):
         placeholder = "%s" if is_postgres else "?"
         c.execute(f"UPDATE chat_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
         conn.commit()
-        conn.close()
         logger.info(f"Updated {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating chat setting: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Diverse Azkar Settings Functions
@@ -599,11 +608,18 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
         if row is None:
             c.execute(f"INSERT INTO diverse_azkar_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_diverse_azkar_settings(chat_id)
+            # Verify insertion was successful
+            if c.rowcount == 0:
+                logger.error(f"Failed to insert default diverse azkar settings for chat {chat_id}")
+                return None
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted diverse azkar settings for chat {chat_id}")
+                return None
         
-        conn.close()
-        return {
+        result = {
             "chat_id": row[0],
             "enabled": bool(row[1]),
             "interval_minutes": row[2],
@@ -614,10 +630,12 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
             "enable_pdf": bool(row[7]) if len(row) > 7 else True,
             "enable_text": bool(row[8]) if len(row) > 8 else True
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting diverse azkar settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 def update_diverse_azkar_setting(chat_id: int, key: str, value):
     """Update a specific diverse azkar setting."""
@@ -647,12 +665,12 @@ def update_diverse_azkar_setting(chat_id: int, key: str, value):
         # Safe to use f-string here as key is validated against whitelist above
         c.execute(f"UPDATE diverse_azkar_settings SET {key} = {placeholder} WHERE chat_id = {placeholder}", (final_value, chat_id))
         conn.commit()
-        conn.close()
         logger.info(f"Updated diverse azkar {key} = {value} for chat {chat_id}")
     except Exception as e:
         logger.error(f"Error updating diverse azkar setting: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 # ────────────────────────────────────────────────
 #               Ramadan Settings Functions
@@ -670,11 +688,18 @@ def get_ramadan_settings(chat_id: int) -> dict:
         if row is None:
             c.execute(f"INSERT INTO ramadan_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_ramadan_settings(chat_id)
+            # Verify insertion was successful
+            if c.rowcount == 0:
+                logger.error(f"Failed to insert default ramadan settings for chat {chat_id}")
+                return None
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted ramadan settings for chat {chat_id}")
+                return None
         
-        conn.close()
-        return {
+        result = {
             "chat_id": row[0],
             "ramadan_enabled": bool(row[1]),
             "laylat_alqadr_enabled": bool(row[2]),
@@ -682,10 +707,12 @@ def get_ramadan_settings(chat_id: int) -> dict:
             "iftar_dua_enabled": bool(row[4]),
             "media_type": row[5]
         }
+        return result
     except Exception as e:
         logger.error(f"Error getting ramadan settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 def update_ramadan_setting(chat_id: int, key: str, value):
     """Update a specific Ramadan setting."""
@@ -740,8 +767,16 @@ def get_hajj_eid_settings(chat_id: int) -> dict:
         if row is None:
             c.execute(f"INSERT INTO hajj_eid_settings (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_hajj_eid_settings(chat_id)
+            # Verify insertion was successful
+            if c.rowcount == 0:
+                logger.error(f"Failed to insert default hajj_eid settings for chat {chat_id}")
+                return None
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted hajj_eid settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
@@ -812,8 +847,16 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
         if row is None:
             c.execute(f"INSERT INTO fasting_reminders (chat_id) VALUES ({placeholder})", (chat_id,))
             conn.commit()
-            conn.close()
-            return get_fasting_reminders_settings(chat_id)
+            # Verify insertion was successful
+            if c.rowcount == 0:
+                logger.error(f"Failed to insert default fasting reminders settings for chat {chat_id}")
+                return None
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted fasting reminders settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
@@ -821,12 +864,12 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
             "arafah_reminder_enabled": bool(row[2]),
             "reminder_time": row[3]
         }
-        conn.close()
         return result
     except Exception as e:
         logger.error(f"Error getting fasting reminders settings: {e}", exc_info=True)
-        conn.close()
         raise
+    finally:
+        conn.close()
 
 def update_fasting_reminder_setting(chat_id: int, key: str, value):
     """Update a specific fasting reminder setting."""
@@ -5946,25 +5989,6 @@ def cmd_setfastingtime(message: types.Message):
     except Exception as e:
         logger.error(f"Error in cmd_setfastingtime: {e}", exc_info=True)
         bot.send_message(message.chat.id, "حدث خطأ أثناء تحديث الوقت")
-
-@bot.message_handler(func=lambda message: True)
-def echo_all(message: types.Message):
-    """
-    Echo handler for testing purposes - responds to all non-command messages.
-    This helps verify that the bot is receiving and processing messages correctly.
-    
-    NOTE: This is a catch-all handler for testing. In production, you may want to
-    remove or modify this handler to avoid interfering with other functionality.
-    Currently limited to private chats only to minimize impact.
-    """
-    try:
-        # Only respond in private chats to avoid spam in groups
-        if message.chat.type == "private" and message.text:
-            response = f"قلت: {message.text}"
-            bot.reply_to(message, response)
-            logger.info(f"Echo handler triggered for message from {message.from_user.id}")
-    except Exception as e:
-        logger.error(f"Error in echo handler: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Flask Routes
