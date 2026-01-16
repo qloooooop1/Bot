@@ -59,6 +59,16 @@ ERROR_CHAT_NOT_FOUND = "chat not found"
 ERROR_FORBIDDEN = "forbidden"
 ERROR_DEACTIVATED = "deactivated"
 
+# Azkar category display names for logging
+AZKAR_CATEGORY_NAMES = {
+    "morning": "Morning Azkar",
+    "evening": "Evening Azkar",
+    "friday_kahf": "Friday Kahf",
+    "friday_dua": "Friday Dua",
+    "sleep": "Sleep Message",
+    "diverse": "Adhkar Diverse"
+}
+
 # ────────────────────────────────────────────────
 #               Configuration
 # ────────────────────────────────────────────────
@@ -77,7 +87,8 @@ if DATABASE_URL:
     
     # Check for valid DSN format (should contain :// for URI format or = for key-value format)
     if "://" not in DATABASE_URL and "=" not in DATABASE_URL:
-        logger.error(f"❌ Invalid DATABASE_URL format: '{DATABASE_URL}'. Expected format: postgresql://user:password@host:port/database")
+        # Don't log the actual value to avoid exposing credentials
+        logger.error("❌ Invalid DATABASE_URL format. Expected format: postgresql://user:password@host:port/database")
         logger.warning("PostgreSQL features disabled due to invalid DSN. Using SQLite fallback.")
         DATABASE_URL = None
     elif DATABASE_URL.startswith("postgres://"):
@@ -1646,7 +1657,8 @@ def send_diverse_azkar(chat_id: int):
     
     try:
         # Log the attempt as required
-        logger.info(f"[{current_time}] Attempted to send adhkar for category [Adhkar Diverse] to chat_id=[{chat_id}]")
+        category_name = AZKAR_CATEGORY_NAMES["diverse"]
+        logger.info(f"[{current_time}] Attempted to send adhkar for category [{category_name}] to chat_id=[{chat_id}]")
         
         # Get diverse azkar settings
         settings = get_diverse_azkar_settings(chat_id)
@@ -1703,37 +1715,37 @@ def send_diverse_azkar(chat_id: int):
                 
                 # Handle specific error types with detailed logging
                 if "blocked" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Bot blocked by user")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Bot blocked by user")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     return
                     
                 elif "kicked" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Bot kicked from chat")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Bot kicked from chat")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     return
                     
                 elif "flood" in error_description.lower() or "retry after" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=FloodWait - {error_description}")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=FloodWait - {error_description}")
                     # Don't disable, just skip this send
                     return
                     
                 elif "chat not found" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Chat not found")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Chat not found")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     return
                     
                 elif "forbidden" in error_description.lower() or "not enough rights" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Permission denied (bot not admin or insufficient rights)")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Permission denied (bot not admin or insufficient rights)")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     return
                     
                 elif "deactivated" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=User/chat deactivated")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=User/chat deactivated")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     return
                     
                 else:
-                    logger.error(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON={error_description}")
+                    logger.error(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON={error_description}")
         
         # Fallback to text if media failed or text is preferred
         if not sent and enable_text and not error_occurred:
@@ -1748,43 +1760,43 @@ def send_diverse_azkar(chat_id: int):
                 error_description = str(e)
                 
                 if "blocked" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Bot blocked by user")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Bot blocked by user")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     
                 elif "kicked" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Bot kicked from chat")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Bot kicked from chat")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     
                 elif "flood" in error_description.lower() or "retry after" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=FloodWait - {error_description}")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=FloodWait - {error_description}")
                     
                 elif "chat not found" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Chat not found")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Chat not found")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     
                 elif "forbidden" in error_description.lower() or "not enough rights" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Permission denied (bot not admin or insufficient rights)")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=Permission denied (bot not admin or insufficient rights)")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     
                 elif "deactivated" in error_description.lower():
-                    logger.warning(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=User/chat deactivated")
+                    logger.warning(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON=User/chat deactivated")
                     update_chat_setting(chat_id, "is_enabled", 0)
                     
                 else:
-                    logger.error(f"[{current_time}] ✗ Failed [Adhkar Diverse] to chat_id=[{chat_id}]: REASON={error_description}")
+                    logger.error(f"[{current_time}] ✗ Failed [{category_name}] to chat_id=[{chat_id}]: REASON={error_description}")
         
         if sent:
             # Update last sent timestamp
             update_diverse_azkar_setting(chat_id, "last_sent_timestamp", int(time.time()))
-            logger.info(f"[{current_time}] ✓ Successfully sent [Adhkar Diverse] to chat_id=[{chat_id}]")
+            logger.info(f"[{current_time}] ✓ Successfully sent [{category_name}] to chat_id=[{chat_id}]")
         else:
             if not enable_text and not allowed_media_types:
-                logger.warning(f"[{current_time}] ✗ Cannot send [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=All media types disabled in settings")
+                logger.warning(f"[{current_time}] ✗ Cannot send [{category_name}] to chat_id=[{chat_id}]: REASON=All media types disabled in settings")
             elif error_occurred:
-                logger.warning(f"[{current_time}] ✗ Failed to send [Adhkar Diverse] to chat_id=[{chat_id}]: REASON=Error occurred during send attempt")
+                logger.warning(f"[{current_time}] ✗ Failed to send [{category_name}] to chat_id=[{chat_id}]: REASON=Error occurred during send attempt")
         
     except Exception as e:
-        logger.error(f"[{current_time}] ✗ Critical error sending [Adhkar Diverse] to chat_id=[{chat_id}]: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error sending [{category_name}] to chat_id=[{chat_id}]: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
 #               Ramadan, Hajj, Eid Azkar Functions
@@ -2207,15 +2219,8 @@ def send_azkar(chat_id: int, azkar_type: str):
     current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
     
     try:
-        # Map azkar_type to friendly category names for logging
-        category_names = {
-            "morning": "Morning Azkar",
-            "evening": "Evening Azkar", 
-            "friday_kahf": "Friday Kahf",
-            "friday_dua": "Friday Dua",
-            "sleep": "Sleep Message"
-        }
-        category_name = category_names.get(azkar_type, azkar_type)
+        # Get friendly category name for logging
+        category_name = AZKAR_CATEGORY_NAMES.get(azkar_type, azkar_type)
         
         # Log the attempt as required
         logger.info(f"[{current_time}] Attempted to send adhkar for category [{category_name}] to chat_id=[{chat_id}]")
@@ -2331,7 +2336,7 @@ def send_azkar(chat_id: int, azkar_type: str):
         logger.info(f"[{current_time}] ✓ Completed sending [{category_name}] to chat_id=[{chat_id}]")
 
     except Exception as e:
-        category_name = category_names.get(azkar_type, azkar_type) if 'category_names' in locals() else azkar_type
+        category_name = AZKAR_CATEGORY_NAMES.get(azkar_type, azkar_type)
         logger.error(f"[{current_time}] ✗ Critical error in send_azkar ([{category_name}]) for chat_id=[{chat_id}]: {e}", exc_info=True)
 
 # ────────────────────────────────────────────────
