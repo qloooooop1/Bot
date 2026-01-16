@@ -84,7 +84,11 @@ class TestPostgreSQLDSNValidation(unittest.TestCase):
 
 
 class TestAdhkarLoggingFormat(unittest.TestCase):
-    """Test that adhkar logging follows required format"""
+    """Test that adhkar logging follows required format
+    
+    Note: The codebase internally uses 'azkar' but the logging output 
+    uses 'adhkar' as specified in the requirements.
+    """
     
     def test_app_has_required_logging_format(self):
         """Test that App.py includes required logging format for adhkar"""
