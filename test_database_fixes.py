@@ -66,7 +66,7 @@ class TestDatabaseConnectionManagement(unittest.TestCase):
         """Clean up test database."""
         try:
             os.unlink(self.temp_db.name)
-        except:
+        except (OSError, FileNotFoundError):
             pass
     
     def test_connection_closed_on_success(self):

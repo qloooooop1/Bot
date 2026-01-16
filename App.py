@@ -523,10 +523,12 @@ def get_chat_settings(chat_id: int) -> dict:
             if c.rowcount == 0:
                 logger.error(f"Failed to insert default settings for chat {chat_id}")
                 return None
-            # Recursively call to get the newly inserted row
-            # Note: This is safe because we just inserted, so row will exist on next call
-            conn.close()
-            return get_chat_settings(chat_id)
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM chat_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted settings for chat {chat_id}")
+                return None
         
         # Handle both old and new schema for backward compatibility
         result = {
@@ -610,8 +612,12 @@ def get_diverse_azkar_settings(chat_id: int) -> dict:
             if c.rowcount == 0:
                 logger.error(f"Failed to insert default diverse azkar settings for chat {chat_id}")
                 return None
-            conn.close()
-            return get_diverse_azkar_settings(chat_id)
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM diverse_azkar_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted diverse azkar settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
@@ -686,8 +692,12 @@ def get_ramadan_settings(chat_id: int) -> dict:
             if c.rowcount == 0:
                 logger.error(f"Failed to insert default ramadan settings for chat {chat_id}")
                 return None
-            conn.close()
-            return get_ramadan_settings(chat_id)
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM ramadan_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted ramadan settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
@@ -761,8 +771,12 @@ def get_hajj_eid_settings(chat_id: int) -> dict:
             if c.rowcount == 0:
                 logger.error(f"Failed to insert default hajj_eid settings for chat {chat_id}")
                 return None
-            conn.close()
-            return get_hajj_eid_settings(chat_id)
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM hajj_eid_settings WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted hajj_eid settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
@@ -837,8 +851,12 @@ def get_fasting_reminders_settings(chat_id: int) -> dict:
             if c.rowcount == 0:
                 logger.error(f"Failed to insert default fasting reminders settings for chat {chat_id}")
                 return None
-            conn.close()
-            return get_fasting_reminders_settings(chat_id)
+            # Fetch the newly inserted row
+            c.execute(f"SELECT * FROM fasting_reminders WHERE chat_id = {placeholder}", (chat_id,))
+            row = c.fetchone()
+            if row is None:
+                logger.error(f"Failed to fetch newly inserted fasting reminders settings for chat {chat_id}")
+                return None
         
         result = {
             "chat_id": row[0],
