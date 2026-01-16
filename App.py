@@ -43,6 +43,23 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # ────────────────────────────────────────────────
+#               Constants
+# ────────────────────────────────────────────────
+
+# Message sending delays (in seconds)
+MESSAGE_DELAY_SECONDS = 0.05  # Small delay between messages to avoid flood limits
+FLOOD_WAIT_DELAY_SECONDS = 1  # Delay after FloodWait error before continuing
+
+# Error detection keywords
+ERROR_BLOCKED = "blocked"
+ERROR_KICKED = "kicked"
+ERROR_FLOOD = "flood"
+ERROR_RETRY_AFTER = "retry after"
+ERROR_CHAT_NOT_FOUND = "chat not found"
+ERROR_FORBIDDEN = "forbidden"
+ERROR_DEACTIVATED = "deactivated"
+
+# ────────────────────────────────────────────────
 #               Configuration
 # ────────────────────────────────────────────────
 
@@ -416,6 +433,46 @@ def get_db_connection():
 # ────────────────────────────────────────────────
 #               Helper Functions
 # ────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────
+#               Helper Functions
+# ────────────────────────────────────────────────
+
+def validate_time_format(time_str: str) -> tuple:
+    """
+    Validate time string format and return hour and minute.
+    
+    Args:
+        time_str (str): Time string in HH:MM format
+        
+    Returns:
+        tuple: (hour, minute, is_valid, error_message)
+               If valid: (h, m, True, None)
+               If invalid: (None, None, False, error_message)
+    """
+    if not time_str:
+        return (None, None, False, "Empty time string")
+    
+    if ':' not in time_str:
+        return (None, None, False, "Missing ':' separator")
+    
+    parts = time_str.split(":")
+    if len(parts) != 2:
+        return (None, None, False, f"Invalid format: expected HH:MM, got '{time_str}'")
+    
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+    except ValueError:
+        return (None, None, False, f"Non-numeric values in '{time_str}'")
+    
+    if not (0 <= h <= 23):
+        return (None, None, False, f"Invalid hour: {h} (must be 0-23)")
+    
+    if not (0 <= m <= 59):
+        return (None, None, False, f"Invalid minute: {m} (must be 0-59)")
+    
+    return (h, m, True, None)
 
 def is_user_admin_in_any_group(user_id: int) -> bool:
     """
@@ -2289,53 +2346,39 @@ def schedule_chat_jobs(chat_id: int):
         
         # Morning Azkar - scheduled based on user-defined time
         if settings["morning_azkar"]:
-            try:
-                morning_time = settings["morning_time"]
-                # Validate time format
-                if not morning_time or ':' not in morning_time:
-                    logger.error(f"[{current_time}] ✗ Invalid morning_time format for chat {chat_id}: '{morning_time}'")
-                else:
-                    h, m = map(int, morning_time.split(":"))
-                    # Validate hour and minute ranges
-                    if not (0 <= h <= 23 and 0 <= m <= 59):
-                        logger.error(f"[{current_time}] ✗ Invalid morning_time values for chat {chat_id}: {h}:{m}")
-                    else:
-                        scheduler.add_job(
-                            send_azkar,
-                            CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                            args=[chat_id, "morning"],
-                            id=f"morning_{chat_id}",
-                            replace_existing=True
-                        )
-                        jobs_scheduled += 1
-                        logger.info(f"[{current_time}] ✓ Scheduled morning azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
-            except (ValueError, AttributeError) as e:
-                logger.error(f"[{current_time}] ✗ Error scheduling morning azkar for chat {chat_id}: {e}")
+            morning_time = settings["morning_time"]
+            h, m, is_valid, error_msg = validate_time_format(morning_time)
+            
+            if is_valid:
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "morning"],
+                    id=f"morning_{chat_id}",
+                    replace_existing=True
+                )
+                jobs_scheduled += 1
+                logger.info(f"[{current_time}] ✓ Scheduled morning azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
+            else:
+                logger.error(f"[{current_time}] ✗ Invalid morning_time for chat {chat_id}: {error_msg}")
 
         # Evening Azkar - scheduled based on user-defined time
         if settings["evening_azkar"]:
-            try:
-                evening_time = settings["evening_time"]
-                # Validate time format
-                if not evening_time or ':' not in evening_time:
-                    logger.error(f"[{current_time}] ✗ Invalid evening_time format for chat {chat_id}: '{evening_time}'")
-                else:
-                    h, m = map(int, evening_time.split(":"))
-                    # Validate hour and minute ranges
-                    if not (0 <= h <= 23 and 0 <= m <= 59):
-                        logger.error(f"[{current_time}] ✗ Invalid evening_time values for chat {chat_id}: {h}:{m}")
-                    else:
-                        scheduler.add_job(
-                            send_azkar,
-                            CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
-                            args=[chat_id, "evening"],
-                            id=f"evening_{chat_id}",
-                            replace_existing=True
-                        )
-                        jobs_scheduled += 1
-                        logger.info(f"[{current_time}] ✓ Scheduled evening azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
-            except (ValueError, AttributeError) as e:
-                logger.error(f"[{current_time}] ✗ Error scheduling evening azkar for chat {chat_id}: {e}")
+            evening_time = settings["evening_time"]
+            h, m, is_valid, error_msg = validate_time_format(evening_time)
+            
+            if is_valid:
+                scheduler.add_job(
+                    send_azkar,
+                    CronTrigger(hour=h, minute=m, timezone=TIMEZONE),
+                    args=[chat_id, "evening"],
+                    id=f"evening_{chat_id}",
+                    replace_existing=True
+                )
+                jobs_scheduled += 1
+                logger.info(f"[{current_time}] ✓ Scheduled evening azkar for chat {chat_id} at {h:02d}:{m:02d} {TIMEZONE}")
+            else:
+                logger.error(f"[{current_time}] ✗ Invalid evening_time for chat {chat_id}: {error_msg}")
 
         # Friday Kahf reminder - fixed time (Friday 9:00 AM)
         if settings["friday_sura"]:
