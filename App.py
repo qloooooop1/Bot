@@ -229,11 +229,17 @@ def migrate_db():
             logger.info("Added enable_text column to diverse_azkar_settings")
         
         conn.commit()
-        logger.info("Database migration completed")
+        logger.info("Database migration completed successfully")
     except Exception as e:
         logger.error(f"Error during database migration: {e}", exc_info=True)
+        try:
+            conn.rollback()
+            logger.warning("Database migration rolled back")
+        except Exception:
+            pass
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 init_db()
 migrate_db()
@@ -2858,7 +2864,8 @@ def callback_select_group(call: types.CallbackQuery):
         try:
             chat_info = bot.get_chat(chat_id)
             chat_title = chat_info.title or f"Group {chat_id}"
-        except:
+        except Exception as e:
+            logger.debug(f"Could not get chat info for {chat_id}: {e}")
             chat_title = f"Group {chat_id}"
         
         # Build settings panel for this group
