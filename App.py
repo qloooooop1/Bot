@@ -2494,25 +2494,38 @@ def schedule_all_chats():
 def my_chat_member_handler(update: types.ChatMemberUpdated):
     """
     Handle bot membership changes in chats.
-    Automatically enables/disables the bot based on admin status.
+    Automatically enables/disables the bot and schedules jobs based on admin status.
     Also syncs all group admins when bot is added as admin.
     """
+    current_time = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
+    
     try:
         chat_id = update.chat.id
+        old_status = update.old_chat_member.status
         new_status = update.new_chat_member.status
         
-        logger.info(f"Bot status changed in chat {chat_id}: {new_status}")
+        logger.info(f"[{current_time}] Bot status changed in chat {chat_id}: {old_status} → {new_status}")
 
         if new_status in ["administrator", "creator"]:
+            # Bot promoted to admin - enable and schedule
+            logger.info(f"[{current_time}] ✓ Bot promoted to admin in chat {chat_id}, enabling and scheduling jobs")
+            
+            # Enable the chat
             update_chat_setting(chat_id, "is_enabled", 1)
+            
+            # Schedule all jobs for this chat
             schedule_chat_jobs(chat_id)
             
             # Sync all group admins when bot is added as admin
-            logger.info(f"Syncing admins for chat {chat_id} after bot was added as admin")
-            synced_count = sync_group_admins(chat_id)
-            if synced_count > 0:
-                logger.info(f"Successfully synced {synced_count} admins for chat {chat_id}")
+            logger.info(f"[{current_time}] Syncing admins for chat {chat_id} after bot was added as admin")
+            try:
+                synced_count = sync_group_admins(chat_id)
+                if synced_count > 0:
+                    logger.info(f"[{current_time}] ✓ Successfully synced {synced_count} admins for chat {chat_id}")
+            except Exception as e:
+                logger.error(f"[{current_time}] ✗ Error syncing admins for chat {chat_id}: {e}")
             
+            # Send activation message to the group
             try:
                 bot.send_message(
                     chat_id,
@@ -2521,17 +2534,28 @@ def my_chat_member_handler(update: types.ChatMemberUpdated):
                     "استخدم /start لتعديل الإعدادات",
                     parse_mode="Markdown"
                 )
-                logger.info(f"Bot activated in chat {chat_id}")
+                logger.info(f"[{current_time}] ✓ Activation message sent to chat {chat_id}")
             except Exception as e:
-                logger.error(f"Failed to send activation message to {chat_id}: {e}")
-        else:
+                logger.error(f"[{current_time}] ✗ Failed to send activation message to chat {chat_id}: {e}")
+                
+        elif old_status in ["administrator", "creator"] and new_status in ["member", "left", "kicked"]:
+            # Bot demoted or removed - disable and clear jobs
+            logger.info(f"[{current_time}] ✗ Bot demoted/removed from chat {chat_id}, disabling and clearing jobs")
+            
+            # Disable the chat
             update_chat_setting(chat_id, "is_enabled", 0)
+            
+            # Remove all scheduled jobs for this chat
+            jobs_removed = 0
             for job in scheduler.get_jobs():
                 if str(chat_id) in job.id:
                     job.remove()
-            logger.info(f"Bot deactivated in chat {chat_id}")
+                    jobs_removed += 1
+            
+            logger.info(f"[{current_time}] ✓ Removed {jobs_removed} scheduled jobs for chat {chat_id}")
+            
     except Exception as e:
-        logger.error(f"Error in my_chat_member_handler: {e}", exc_info=True)
+        logger.error(f"[{current_time}] ✗ Critical error in my_chat_member_handler: {e}", exc_info=True)
 
 @bot.message_handler(content_types=[
     'new_chat_members', 'left_chat_member', 'new_chat_title',
